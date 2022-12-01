@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_SPMD_CANONICALIZE_ALL_GATHER_FOR_CSE_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_SPMD_CANONICALIZE_ALL_GATHER_FOR_CSE_H_
 
-#include "tensorflow/compiler/xla/service/hlo_module.h"
+#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
 #include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
 
 namespace xla {
@@ -29,13 +29,16 @@ class CanonicalizeAllGatherForCSE : public HloModulePass {
   ~CanonicalizeAllGatherForCSE() override = default;
   absl::string_view name() const override { return "canon-all-gather-for-cse"; }
 
-  StatusOr<bool> Run(HloModule* module) override;
+  using HloPassInterface::Run;
+  StatusOr<bool> Run(
+      HloModule* module,
+      const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
  private:
   StatusOr<bool> RunOnComputation(HloComputation* comp);
-  int64 NextChannelId() { return next_channel_id_++; }
+  int64_t NextChannelId() { return next_channel_id_++; }
 
-  int64 next_channel_id_;
+  int64_t next_channel_id_;
 };
 
 }  // namespace xla

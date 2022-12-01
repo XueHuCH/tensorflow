@@ -25,10 +25,6 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_split.h"
 #include "linenoise.h"
-#include "tensorflow/c/c_api.h"
-#include "tensorflow/c/checkpoint_reader.h"
-#include "tensorflow/core/framework/graph.pb.h"
-#include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/init_main.h"
@@ -38,7 +34,6 @@ limitations under the License.
 #include "tensorflow/core/profiler/internal/tfprof_utils.h"
 #include "tensorflow/core/profiler/tfprof_log.pb.h"
 #include "tensorflow/core/profiler/tfprof_options.h"
-#include "tensorflow/core/protobuf/config.pb.h"
 #include "tensorflow/core/util/command_line_flags.h"
 
 namespace tensorflow {
@@ -73,7 +68,7 @@ int Run(int argc, char** argv) {
   string FLAGS_run_meta_path = "";
   string FLAGS_op_log_path = "";
   string FLAGS_checkpoint_path = "";
-  int32 FLAGS_max_depth = 10;
+  int32_t FLAGS_max_depth = 10;
   int64_t FLAGS_min_bytes = 0;
   int64_t FLAGS_min_peak_bytes = 0;
   int64_t FLAGS_min_residual_bytes = 0;

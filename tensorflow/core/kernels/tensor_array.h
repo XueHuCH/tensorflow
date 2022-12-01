@@ -129,16 +129,16 @@ TF_CALL_COMPLEX_TYPES(TENSOR_ARRAY_SET_ZERO_GPU);
 //
 class TensorArray : public ResourceBase {
  public:
-  static std::atomic<int64> tensor_array_counter;
+  static std::atomic<int64_t> tensor_array_counter;
 
   // Construct a TensorArray for holding Tensors of type 'dtype' with
   // 'N' elements.  While the underlying storage is a std::vector and
   // can hold more than MAX_INT entries, in practice we do not expect
   // users to construct this many Tensors for storage in a TensorArray.
   TensorArray(const string& key, const DataType& dtype, const Tensor& handle,
-              int32 N, const PartialTensorShape& element_shape,
+              int32_t N, const PartialTensorShape& element_shape,
               bool identical_element_shapes, bool dynamic_size,
-              bool multiple_writes_aggregate, bool is_grad, int32 marked_size,
+              bool multiple_writes_aggregate, bool is_grad, int32_t marked_size,
               bool clear_after_read)
       : key_(key),
         dtype_(dtype),
@@ -184,7 +184,7 @@ class TensorArray : public ResourceBase {
   // Note, value is passed as a pointer because we its underlying
   // Tensor's shape is accessed.  Otherwise it is not modified.
   template <typename Device, typename T>
-  Status WriteOrAggregate(OpKernelContext* ctx, const int32 index,
+  Status WriteOrAggregate(OpKernelContext* ctx, const int32_t index,
                           const Tensor* value) {
     mutex_lock l(mu_);
     return LockedWriteOrAggregate<Device, T>(ctx, index, value);
@@ -195,13 +195,13 @@ class TensorArray : public ResourceBase {
                               const std::vector<int32>& indices,
                               std::vector<Tensor>* values) {
     mutex_lock l(mu_);
-    int32 i = 0;
-    for (const int32 ix : indices) {
+    int32_t i = 0;
+    for (const int32_t ix : indices) {
       Status s = LockedWriteOrAggregate<Device, T>(ctx, ix, &(*values)[i]);
       ++i;
       TF_RETURN_IF_ERROR(s);
     }
-    return Status::OK();
+    return OkStatus();
   }
 
   // Read from index 'index' into Tensor 'value'.
@@ -220,7 +220,7 @@ class TensorArray : public ResourceBase {
   //    the returned '*value'.
   //  * The index is marked as read (it cannot be rewritten to).
   template <typename Device, typename T>
-  Status Read(OpKernelContext* ctx, const int32 index, Tensor* value) {
+  Status Read(OpKernelContext* ctx, const int32_t index, Tensor* value) {
     mutex_lock l(mu_);
     return LockedRead<Device, T>(ctx, index, value);
   }
@@ -231,13 +231,13 @@ class TensorArray : public ResourceBase {
     mutex_lock l(mu_);
     values->clear();
     values->resize(indices.size());
-    int32 i = 0;
-    for (const int32 ix : indices) {
+    int32_t i = 0;
+    for (const int32_t ix : indices) {
       Status s = LockedRead<Device, T>(ctx, ix, &(*values)[i]);
       ++i;
       if (!s.ok()) return s;
     }
-    return Status::OK();
+    return OkStatus();
   }
 
   DataType ElemType() const { return dtype_; }
@@ -255,7 +255,7 @@ class TensorArray : public ResourceBase {
       return s;
     }
     element_shape_ = new_element_shape_;
-    return Status::OK();
+    return OkStatus();
   }
 
   string DebugString() const override {
@@ -274,17 +274,17 @@ class TensorArray : public ResourceBase {
     mutex_lock l(mu_);
     TF_RETURN_IF_ERROR(LockedReturnIfClosed());
     *size = tensors_.size();
-    return Status::OK();
+    return OkStatus();
   }
 
   // Record the size of the TensorArray after an unpack or split.
-  Status SetMarkedSize(int32 size) {
+  Status SetMarkedSize(int32_t size) {
     mutex_lock l(mu_);
     TF_RETURN_IF_ERROR(LockedReturnIfClosed());
     if (!is_grad_) {
       marked_size_ = size;
     }
-    return Status::OK();
+    return OkStatus();
   }
 
   // Return the marked size of the TensorArray.
@@ -292,7 +292,7 @@ class TensorArray : public ResourceBase {
     mutex_lock l(mu_);
     TF_RETURN_IF_ERROR(LockedReturnIfClosed());
     *size = marked_size_;
-    return Status::OK();
+    return OkStatus();
   }
 
   // Return the size that should be used by pack or concat op.
@@ -300,7 +300,7 @@ class TensorArray : public ResourceBase {
     mutex_lock l(mu_);
     TF_RETURN_IF_ERROR(LockedReturnIfClosed());
     *size = is_grad_ ? marked_size_ : tensors_.size();
-    return Status::OK();
+    return OkStatus();
   }
 
   // Once a TensorArray is being used for gradient calculations, it
@@ -349,16 +349,16 @@ class TensorArray : public ResourceBase {
   }
 
  private:
-  Status LockedWrite(OpKernelContext* ctx, const int32 index, Tensor* value)
+  Status LockedWrite(OpKernelContext* ctx, const int32_t index, Tensor* value)
       TF_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
   template <typename Device, typename T>
-  Status LockedWriteOrAggregate(OpKernelContext* ctx, const int32 index,
+  Status LockedWriteOrAggregate(OpKernelContext* ctx, const int32_t index,
                                 const Tensor* value)
       TF_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
   template <typename Device, typename T>
-  Status LockedRead(OpKernelContext* ctx, const int32 index, Tensor* value)
+  Status LockedRead(OpKernelContext* ctx, const int32_t index, Tensor* value)
       TF_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
   Status LockedReturnIfClosed() const TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
@@ -366,7 +366,7 @@ class TensorArray : public ResourceBase {
       return errors::InvalidArgument("TensorArray ", handle_.vec<tstring>()(1),
                                      " has already been closed.");
     }
-    return Status::OK();
+    return OkStatus();
   }
 
   const string key_;
@@ -438,7 +438,7 @@ class TensorArray : public ResourceBase {
 
 template <typename Device, typename T>
 Status TensorArray::LockedWriteOrAggregate(OpKernelContext* ctx,
-                                           const int32 index,
+                                           const int32_t index,
                                            const Tensor* value) {
   TF_RETURN_IF_ERROR(LockedReturnIfClosed());
   size_t index_size = static_cast<size_t>(index);
@@ -507,7 +507,7 @@ Status TensorArray::LockedWriteOrAggregate(OpKernelContext* ctx,
       // was just a shape, which just means zeros.  So all we must do in this
       // case is copy the reference over and return early.
       t.tensor = *value;
-      return Status::OK();
+      return OkStatus();
     }
 
     Tensor* existing_t = &t.tensor;
@@ -535,11 +535,11 @@ Status TensorArray::LockedWriteOrAggregate(OpKernelContext* ctx,
     t.shape = value->shape();
     t.written = true;
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 template <typename Device, typename T>
-Status TensorArray::LockedRead(OpKernelContext* ctx, const int32 index,
+Status TensorArray::LockedRead(OpKernelContext* ctx, const int32_t index,
                                Tensor* value) {
   TF_RETURN_IF_ERROR(LockedReturnIfClosed());
   if ((index < 0) ||
@@ -618,7 +618,7 @@ Status TensorArray::LockedRead(OpKernelContext* ctx, const int32 index,
     t.cleared = true;
   }
   t.read = true;
-  return Status::OK();
+  return OkStatus();
 }
 
 }  // namespace tensorflow

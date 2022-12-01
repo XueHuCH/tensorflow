@@ -28,7 +28,7 @@ namespace tensorflow {
       Name("Sum")                                                              \
           .Device(DEVICE_CPU)                                                  \
           .TypeConstraint<type>("T")                                           \
-          .TypeConstraint<int64>("Tidx"),                                      \
+          .TypeConstraint<int64_t>("Tidx"),                                    \
       ReductionOp<CPUDevice, type, int64, Eigen::internal::SumReducer<type>>);
 TF_CALL_NUMBER_TYPES(REGISTER_CPU_KERNELS);
 #undef REGISTER_CPU_KERNELS
@@ -47,22 +47,23 @@ TF_CALL_NUMBER_TYPES(REGISTER_CPU_KERNELS);
       Name("Sum")                                                              \
           .Device(DEVICE_GPU)                                                  \
           .TypeConstraint<type>("T")                                           \
-          .TypeConstraint<int64>("Tidx")                                       \
+          .TypeConstraint<int64_t>("Tidx")                                     \
           .HostMemory("reduction_indices"),                                    \
       ReductionOp<GPUDevice, type, int64, Eigen::internal::SumReducer<type>>);
 TF_CALL_int64(REGISTER_GPU_KERNELS);
+TF_CALL_bfloat16(REGISTER_GPU_KERNELS);
 TF_CALL_GPU_NUMBER_TYPES(REGISTER_GPU_KERNELS);
 #if GOOGLE_CUDA
 TF_CALL_COMPLEX_TYPES(REGISTER_GPU_KERNELS);
 #endif
 #undef REGISTER_GPU_KERNELS
 
-// A special GPU kernel for int32.
+// A special DEVICE_DEFAULT kernel for int32.
 // TODO(b/25387198): Also enable int32 in device memory. This kernel
 // registration requires all int32 inputs and outputs to be in host memory.
 REGISTER_KERNEL_BUILDER(
     Name("Sum")
-        .Device(DEVICE_GPU)
+        .Device(DEVICE_DEFAULT)
         .TypeConstraint<int32>("T")
         .TypeConstraint<int32>("Tidx")
         .HostMemory("input")
@@ -71,15 +72,14 @@ REGISTER_KERNEL_BUILDER(
     ReductionOp<CPUDevice, int32, int32, Eigen::internal::SumReducer<int32>>);
 REGISTER_KERNEL_BUILDER(
     Name("Sum")
-        .Device(DEVICE_GPU)
+        .Device(DEVICE_DEFAULT)
         .TypeConstraint<int32>("T")
-        .TypeConstraint<int64>("Tidx")
+        .TypeConstraint<int64_t>("Tidx")
         .HostMemory("input")
         .HostMemory("output")
         .HostMemory("reduction_indices"),
     ReductionOp<CPUDevice, int32, int64, Eigen::internal::SumReducer<int32>>);
 
 #endif
-
 
 }  // namespace tensorflow

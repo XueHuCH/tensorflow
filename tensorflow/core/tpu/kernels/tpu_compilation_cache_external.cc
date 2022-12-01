@@ -19,6 +19,7 @@ limitations under the License.
 #include "absl/memory/memory.h"
 #include "absl/strings/str_cat.h"
 #include "tensorflow/compiler/xla/service/hlo.pb.h"
+#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_ops_c_api.h"
 #include "tensorflow/core/lib/gtl/cleanup.h"
 #include "tensorflow/core/platform/random.h"
 #include "tensorflow/core/profiler/lib/traceme.h"
@@ -28,16 +29,15 @@ limitations under the License.
 #include "tensorflow/core/tpu/kernels/tpu_compile_op_support.h"
 #include "tensorflow/core/tpu/kernels/tpu_util.h"
 #include "tensorflow/core/tpu/kernels/trace_util.h"
-#include "tensorflow/core/tpu/tpu_ops_c_api.h"
 
 namespace tensorflow {
 namespace tpu {
 
 namespace {
 
-int64 get_uid() {
+int64_t get_uid() {
   uint64 unsigned_rand = random::New64() & INT64_MAX;
-  return static_cast<int64>(unsigned_rand);
+  return static_cast<int64_t>(unsigned_rand);
 }
 
 void PopulateEntry(const std::string& key, CompiledSubgraph* entry,
@@ -107,9 +107,15 @@ CompiledSubgraph* TpuCompilationCacheExternal::InitializeEntry(
 
   main_entry->initialization_status = initialization_status;
 
+  if (!initialization_status.ok()) {
+    // Compilation failure might caused the subsequent tpu_program_group init
+    // failed with assert error. Log the error here to make debugging easier.
+    LOG(ERROR) << initialization_status.error_message();
+  }
+
   // Add the entry to the uid index.
   auto uid_inserted = entries_by_uid_.insert(
-      std::pair<int64, CompiledSubgraph*>(main_entry->uid, main_entry));
+      std::pair<int64_t, CompiledSubgraph*>(main_entry->uid, main_entry));
   CHECK(uid_inserted.second);
 
   if (tpu_program_group.has_sharding_program()) {

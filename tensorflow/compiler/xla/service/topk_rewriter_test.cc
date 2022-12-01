@@ -15,14 +15,14 @@ limitations under the License.
 
 #include "tensorflow/compiler/xla/service/topk_rewriter.h"
 
+#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
 #include "tensorflow/compiler/xla/service/hlo_dce.h"
 #include "tensorflow/compiler/xla/service/hlo_matchers.h"
-#include "tensorflow/compiler/xla/service/hlo_module.h"
 #include "tensorflow/compiler/xla/tests/hlo_test_base.h"
 #include "tensorflow/compiler/xla/tests/test_macros.h"
 #include "tensorflow/compiler/xla/tests/test_utils.h"
-#include "tensorflow/core/lib/core/status_test_util.h"
-#include "tensorflow/core/platform/test.h"
+#include "tensorflow/tsl/lib/core/status_test_util.h"
+#include "tensorflow/tsl/platform/test.h"
 
 namespace op = xla::testing::opcode_matchers;
 
@@ -130,7 +130,8 @@ ENTRY cluster {
 })";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_string));
-  TopkRewriter rewriter([](const HloSortInstruction*, int64) { return true; });
+  TopkRewriter rewriter(
+      [](const HloSortInstruction*, int64_t) { return true; });
   TF_ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   TF_ASSERT_OK(HloDCE().Run(module.get()).status());
   EXPECT_TRUE(changed);
@@ -160,7 +161,8 @@ ENTRY cluster {
 })";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_string));
-  TopkRewriter rewriter([](const HloSortInstruction*, int64) { return true; });
+  TopkRewriter rewriter(
+      [](const HloSortInstruction*, int64_t) { return true; });
   TF_ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   TF_ASSERT_OK(HloDCE().Run(module.get()).status());
   EXPECT_TRUE(changed);
@@ -190,7 +192,8 @@ ENTRY cluster {
 })";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_string));
-  TopkRewriter rewriter([](const HloSortInstruction*, int64) { return true; });
+  TopkRewriter rewriter(
+      [](const HloSortInstruction*, int64_t) { return true; });
   TF_ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   TF_ASSERT_OK(HloDCE().Run(module.get()).status());
   EXPECT_TRUE(changed);
@@ -220,7 +223,8 @@ ENTRY cluster {
 })";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_string));
-  TopkRewriter rewriter([](const HloSortInstruction*, int64) { return true; });
+  TopkRewriter rewriter(
+      [](const HloSortInstruction*, int64_t) { return true; });
   TF_ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   TF_ASSERT_OK(HloDCE().Run(module.get()).status());
   EXPECT_TRUE(changed);
@@ -250,7 +254,8 @@ ENTRY cluster {
 })";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_string));
-  TopkRewriter rewriter([](const HloSortInstruction*, int64) { return true; });
+  TopkRewriter rewriter(
+      [](const HloSortInstruction*, int64_t) { return true; });
   TF_ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   TF_ASSERT_OK(HloDCE().Run(module.get()).status());
   EXPECT_TRUE(changed);

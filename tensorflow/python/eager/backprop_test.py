@@ -12,10 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import functools
 
 from absl.testing import parameterized
@@ -25,7 +21,6 @@ from tensorflow.python import pywrap_tfe
 from tensorflow.python.eager import backprop
 from tensorflow.python.eager import context
 from tensorflow.python.eager import def_function
-from tensorflow.python.eager import function
 from tensorflow.python.eager import tape as tape_lib
 from tensorflow.python.eager import test
 from tensorflow.python.framework import constant_op
@@ -223,6 +218,30 @@ class BackpropTest(test.TestCase, parameterized.TestCase):
       y = identity(x)
     with self.assertRaises(ValueError):
       t.gradient(y, [x])
+
+  def test_stop_gradient_hides_downstream_ops(self):
+
+    @custom_gradient.custom_gradient
+    def _backward_pass_error(x):
+
+      def _grad(_):
+        raise AssertionError(
+            'Unexpectedly ran the backward function. This probably means that '
+            'tf.GradientTape is not properly ignoring tensors downstream of '
+            'tf.stop_gradient.')
+
+      return x, _grad
+
+    @def_function.function
+    def f(x):
+      return _backward_pass_error(x)
+
+    x = constant_op.constant(1.)
+    with backprop.GradientTape() as tape:
+      tape.watch(x)
+      y = f(array_ops.stop_gradient(x))
+
+    self.assertIsNone(tape.gradient(y, x))
 
   def testOutputGradUsedInComputation(self):
     with backprop.GradientTape() as t:
@@ -1038,11 +1057,11 @@ class BackpropTest(test.TestCase, parameterized.TestCase):
   @test_util.run_in_graph_and_eager_modes
   def testUnconnectedGradientsNestedDefunZeros(self):
 
-    @function.defun
+    @def_function.function
     def f(x):
       return x * x
 
-    @function.defun
+    @def_function.function
     def h(y):
       z = f(y)
       return array_ops.stop_gradient(z)
@@ -1128,6 +1147,14 @@ class BackpropTest(test.TestCase, parameterized.TestCase):
   def testMakeAttrTypeList(self):
     self.assertEqual([dtypes.float32],
                      backprop.make_attr([int(pywrap_tfe.TF_ATTR_TYPE)], [1]))
+
+  def testMakeAttrString(self):
+    self.assertEqual(b'a',
+                     backprop.make_attr(int(pywrap_tfe.TF_ATTR_STRING), 'a'))
+
+  def testMakeAttrStringList(self):
+    self.assertEqual(
+        [b'a'], backprop.make_attr([int(pywrap_tfe.TF_ATTR_STRING)], ['a']))
 
   def testMulType(self):
 
@@ -1628,7 +1655,7 @@ class BackpropTest(test.TestCase, parameterized.TestCase):
         b = math_ops.cos(x)
         return math_ops.add(a, b)
 
-    @function.defun
+    @def_function.function
     def grad_fn(x):
       return backprop.gradients_function(fn)(x)
 
@@ -1734,7 +1761,7 @@ class JacobianTest(test.TestCase):
   @test_util.run_v1_only('b/120545219')
   def testPforDefun(self):
 
-    @function.defun
+    @def_function.function
     def _f():
       return self._jacobian(experimental_use_pfor=True)
 
@@ -1745,7 +1772,7 @@ class JacobianTest(test.TestCase):
   @test_util.run_v1_only('b/120545219')
   def testWhileLoopDefun(self):
 
-    @function.defun
+    @def_function.function
     def _f():
       return self._jacobian(experimental_use_pfor=False)
 
@@ -1937,7 +1964,7 @@ class BatchJacobianTest(test.TestCase, parameterized.TestCase):
 
   def testPforDefun(self):
 
-    @function.defun
+    @def_function.function
     def _f():
       return self._batch_jacobian(experimental_use_pfor=True)
 
@@ -1946,7 +1973,7 @@ class BatchJacobianTest(test.TestCase, parameterized.TestCase):
 
   def testWhileLoopDefun(self):
 
-    @function.defun
+    @def_function.function
     def _f():
       return self._batch_jacobian(experimental_use_pfor=False)
 
@@ -2032,6 +2059,15 @@ class BatchJacobianTest(test.TestCase, parameterized.TestCase):
                                 experimental_use_pfor=use_pfor)
       self.assertEqual(dtype, jac.dtype)
       self.assertAllClose([[[0.]]], jac)
+
+  def test_strided_slice(self):
+    x = array_ops.ones([2, 4, 2])
+    length = constant_op.constant([2, 3, 4, 4], dtype=dtypes.int64)
+    with backprop.GradientTape() as tape:
+      tape.watch(x)
+      y = array_ops.repeat(x, [2], axis=1)
+      y = y[:, :math_ops.reduce_max(length), :]
+    tape.batch_jacobian(y, x)
 
 
 class AggregateIndexedSlicesGradientsTest(test_util.TensorFlowTestCase):

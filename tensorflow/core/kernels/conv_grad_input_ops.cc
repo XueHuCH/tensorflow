@@ -17,10 +17,14 @@ limitations under the License.
 
 #include "tensorflow/core/kernels/conv_grad_input_ops.h"
 
+#include <utility>
+
 #include "tensorflow/core/profiler/lib/scoped_annotation.h"
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#include "tensorflow/core/kernels/cast_op.h"
 #include "tensorflow/core/protobuf/autotuning.pb.h"
+#include "tensorflow/core/util/autotune_maps/conv_parameters.h"
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 namespace tensorflow {
@@ -29,6 +33,7 @@ typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
 
 // To be used inside depthwise_conv_grad_op.cc.
+template struct LaunchConv2DBackpropInputOp<CPUDevice, bfloat16>;
 template struct LaunchConv2DBackpropInputOp<CPUDevice, Eigen::half>;
 template struct LaunchConv2DBackpropInputOp<CPUDevice, float>;
 template struct LaunchConv2DBackpropInputOp<CPUDevice, double>;
@@ -38,13 +43,13 @@ template struct LaunchConv2DBackpropInputOp<CPUDevice, double>;
 // The slow version (but compiles for GPU)
 
 // A dummy type to group forward backward data autotune results together.
-struct ConvBackwardDataAutoTuneGroup {
+struct ConvBackwardDataAutotuneGroup {
   static string name() { return "ConvBwdData"; }
 };
 
-typedef AutoTuneSingleton<ConvBackwardDataAutoTuneGroup, ConvParameters,
-                          se::dnn::AlgorithmConfig>
-    AutoTuneConvBwdData;
+typedef AutotuneSingleton<ConvBackwardDataAutotuneGroup, ConvParameters,
+                          AutotuneEntry<se::dnn::ConvOp>>
+    AutotuneConvBwdData;
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 // Computes backprop input using Eigen::SpatialConvolutionBackwardInput on GPU
@@ -55,7 +60,7 @@ struct LaunchConv2DBackpropInputOp<GPUDevice, int32> {
                   const Tensor& out_backprop, const Tensor& filter,
                   int row_dilation, int col_dilation, int row_stride,
                   int col_stride, const Padding& padding,
-                  const std::vector<int64>& explicit_paddings,
+                  const std::vector<int64_t>& explicit_paddings,
                   Tensor* in_backprop, TensorFormat data_format) {
     LaunchConv2DBackpropInputOpImpl<GPUDevice, int32> launcher;
     launcher(ctx, use_cudnn, cudnn_use_autotune, out_backprop, filter,
@@ -66,11 +71,11 @@ struct LaunchConv2DBackpropInputOp<GPUDevice, int32> {
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 template <typename T>
-void LaunchConv2DBackpropInputOp<GPUDevice, T>::operator()(
+void LaunchConv2DBackpropInputOpGpuImpl(
     OpKernelContext* ctx, bool use_cudnn, bool cudnn_use_autotune,
     const Tensor& out_backprop, const Tensor& filter, int row_dilation,
     int col_dilation, int row_stride, int col_stride, const Padding& padding,
-    const std::vector<int64>& explicit_paddings, Tensor* in_backprop,
+    const std::vector<int64_t>& explicit_paddings, Tensor* in_backprop,
     TensorFormat data_format) {
   using se::dnn::AlgorithmConfig;
   using se::dnn::AlgorithmDesc;
@@ -94,15 +99,15 @@ void LaunchConv2DBackpropInputOp<GPUDevice, T>::operator()(
                filter_shape, out_backprop.shape(), dilations, strides, padding,
                explicit_paddings, data_format, &dims));
 
-  int64 padding_top = -1, padding_bottom = -1;
-  int64 padding_left = -1, padding_right = -1;
+  int64_t padding_top = -1, padding_bottom = -1;
+  int64_t padding_left = -1, padding_right = -1;
   if (padding == EXPLICIT) {
     GetExplicitPaddingForDim(explicit_paddings, data_format, 'H', &padding_top,
                              &padding_bottom);
     GetExplicitPaddingForDim(explicit_paddings, data_format, 'W', &padding_left,
                              &padding_right);
   }
-  int64 expected_out_rows, expected_out_cols;
+  int64_t expected_out_rows, expected_out_cols;
   // The function is guaranteed to succeed because we checked the output and
   // padding was valid earlier.
   TF_CHECK_OK(GetWindowedOutputSizeVerboseV2(
@@ -151,8 +156,9 @@ void LaunchConv2DBackpropInputOp<GPUDevice, T>::operator()(
     auto transpose = se::blas::Transpose::kTranspose;
     auto no_transpose = se::blas::Transpose::kNoTranspose;
 
-    OP_REQUIRES_OK(ctx, stream->ThenBlasGemm(transpose, no_transpose, n, m, k,
-                                             b_ptr, k, a_ptr, k, &c_ptr, n));
+    OP_REQUIRES_OK(ctx, stream->ThenBlasGemm(
+                            transpose, no_transpose, n, m, k, b_ptr, k, a_ptr,
+                            k, &c_ptr, n, se::blas::kDefaultComputePrecision));
     return;
   } else if (dims.spatial_dims[0].filter_size ==
                  dims.spatial_dims[0].input_size &&
@@ -177,23 +183,24 @@ void LaunchConv2DBackpropInputOp<GPUDevice, T>::operator()(
     auto transpose = se::blas::Transpose::kTranspose;
     auto no_transpose = se::blas::Transpose::kNoTranspose;
 
-    OP_REQUIRES_OK(ctx, stream->ThenBlasGemm(transpose, no_transpose, n, m, k,
-                                             b_ptr, k, a_ptr, k, &c_ptr, n));
+    OP_REQUIRES_OK(ctx, stream->ThenBlasGemm(
+                            transpose, no_transpose, n, m, k, b_ptr, k, a_ptr,
+                            k, &c_ptr, n, se::blas::kDefaultComputePrecision));
     return;
   }
 
-  const int64 common_padding_rows = std::min(padding_top, padding_bottom);
-  const int64 common_padding_cols = std::min(padding_left, padding_right);
+  const int64_t common_padding_rows = std::min(padding_top, padding_bottom);
+  const int64_t common_padding_cols = std::min(padding_left, padding_right);
   TensorShape compatible_input_shape;
   if (padding_top != padding_bottom || padding_left != padding_right) {
     // Pad the input in the same way we did during the forward pass, so that
     // cuDNN or MIOpen receives the same input during the backward pass function
     // as it did during the forward pass function.
-    const int64 padding_rows_diff = std::abs(padding_bottom - padding_top);
-    const int64 padding_cols_diff = std::abs(padding_right - padding_left);
-    const int64 new_in_rows =
+    const int64_t padding_rows_diff = std::abs(padding_bottom - padding_top);
+    const int64_t padding_cols_diff = std::abs(padding_right - padding_left);
+    const int64_t new_in_rows =
         dims.spatial_dims[0].input_size + padding_rows_diff;
-    const int64 new_in_cols =
+    const int64_t new_in_cols =
         dims.spatial_dims[1].input_size + padding_cols_diff;
     compatible_input_shape = ShapeFromFormat(
         data_format, dims.batch_size, new_in_rows, new_in_cols, dims.in_depth);
@@ -205,12 +212,8 @@ void LaunchConv2DBackpropInputOp<GPUDevice, T>::operator()(
       << "Negative row or col paddings: (" << common_padding_rows << ", "
       << common_padding_cols << ")";
 
-  // The Tensor Core in NVIDIA Volta+ GPUs supports efficient convolution with
-  // fp16 in NHWC data layout. In all other configurations it's more efficient
-  // to run computation in NCHW data format.
-  const bool compute_in_nhwc = DataTypeToEnum<T>::value == DT_HALF &&
-                               stream->GetCudaComputeCapability().IsAtLeast(
-                                   se::CudaComputeCapability::VOLTA);
+  const bool compute_in_nhwc =
+      ComputeInNhwcEnabled(DataTypeToEnum<T>::value, stream);
 
   // We only do one directional conversion: NHWC->NCHW. We never convert in the
   // other direction. Grappler layout optimizer selects the preferred layout and
@@ -287,7 +290,7 @@ void LaunchConv2DBackpropInputOp<GPUDevice, T>::operator()(
         To32Bit(filter.tensor<T, 4>()),
         To32Bit(transformed_filter.tensor<T, 4>()));
 
-    return Status::OK();
+    return OkStatus();
   };
 
   if (compute_data_format == FORMAT_NCHW) {
@@ -343,19 +346,11 @@ void LaunchConv2DBackpropInputOp<GPUDevice, T>::operator()(
       AsDeviceMemory(pre_transformed_in_backprop.template flat<T>().data(),
                      pre_transformed_in_backprop.template flat<T>().size());
 
-  int64 workspace_bytes = 1LL << 32;  // 4GB by default.
-  // CuDNN frontend will expose more engines some of which might use too much
-  // workspace. This would increase the overall demand of memory when training
-  // models.
-  if (CudnnUseFrontend()) {
-    workspace_bytes = 1LL << 30;  // 1GB by default.
-  }
-  static int64 ConvolveBackwardDataScratchSize =
-      GetDnnWorkspaceLimit("TF_CUDNN_WORKSPACE_LIMIT_IN_MB", workspace_bytes);
-  DnnScratchAllocator scratch_allocator(ConvolveBackwardDataScratchSize, ctx);
-  int device_id = stream->parent()->device_ordinal();
-  DataType dtype = out_backprop.dtype();
+  static int64_t ConvolveBackwardDataScratchSize =
+      GetDnnWorkspaceLimitOrDefault();
+
   ConvParameters conv_parameters = {
+      stream->parent(),
       dims.batch_size,                     // batch
       dims.in_depth,                       // in_depths
       {{input_desc.height(),               // in_rows
@@ -371,210 +366,24 @@ void LaunchConv2DBackpropInputOp<GPUDevice, T>::operator()(
         dims.spatial_dims[1].stride}},     // stride_cols
       {{common_padding_rows,               // padding_rows
         common_padding_cols}},             // padding_cols
-      dtype,                               // tensor data type
-      device_id,                           // device_id
-      conv_desc.group_count()              // group_count
+      out_backprop.dtype(),                // tensor data type
+      conv_desc.group_count(),             // group_count
   };
-#if TENSORFLOW_USE_ROCM
-  // cudnn_use_autotune is applicable only the CUDA flow
-  // for ROCm/MIOpen, we need to call GetMIOpenConvolveAlgorithms explicitly
-  // if we do not have a cached algorithm_config for this conv_parameters
-  cudnn_use_autotune = true;
-#endif
-  AlgorithmConfig algorithm_config;
 
-  if (cudnn_use_autotune && !AutoTuneConvBwdData::GetInstance()->Find(
-                                conv_parameters, &algorithm_config)) {
-    profiler::ScopedAnnotation trace("cudnn_autotuning");
+  auto entry_or = AutotuneUnfusedConv(
+      cudnn_use_autotune, AutotuneConvBwdData::GetInstance(), conv_parameters,
+      ctx, se::dnn::ConvolutionKind::BACKWARD_DATA, input_desc, in_backprop_ptr,
+      filter_desc, filter_ptr, conv_desc, output_desc, out_backprop_ptr,
+      ConvolveBackwardDataScratchSize);
+  OP_REQUIRES_OK(ctx, entry_or.status());
+  auto autotune_entry = std::move(entry_or).value();
 
-    std::vector<std::unique_ptr<se::dnn::ConvolveExecutionPlan>> plans;
-#if GOOGLE_CUDA
-    std::vector<AlgorithmDesc> algorithms;
-    std::vector<AlgorithmConfig> configs;
-    if (CudnnUseFrontend()) {
-      OP_REQUIRES(
-          ctx,
-          stream->parent()->GetConvolveExecutionPlans(
-              se::dnn::ConvolutionKind::BACKWARD_DATA,
-              se::dnn::ToDataType<T>::value, stream, input_desc, filter_desc,
-              output_desc, conv_desc, &plans),
-          errors::Unknown("Failed to get convolution execution plan. This is "
-                          "probably because cuDNN failed to initialize, so try "
-                          "looking to see if a warning log message was printed "
-                          "above."));
-      for (const auto& plan : plans) {
-        configs.push_back(
-            AlgorithmConfig(AlgorithmDesc{plan->getTag(), plan->get_raw_desc()},
-                            plan->getWorkspaceSize()));
-      }
-    } else {
-      OP_REQUIRES(
-          ctx, stream->parent()->GetConvolveBackwardDataAlgorithms(&algorithms),
-          errors::Unknown("Failed to get convolution execution plan. This is "
-                          "probably because cuDNN failed to initialize, so try "
-                          "looking to see if a warning log message was printed "
-                          "above."));
-      for (const auto& algorithm : algorithms) {
-        configs.push_back(AlgorithmConfig(algorithm));
-      }
-    }
-
-    se::TfAllocatorAdapter tf_allocator_adapter(ctx->device()->GetAllocator({}),
-                                                stream);
-
-    se::RedzoneAllocator rz_allocator(stream, &tf_allocator_adapter,
-                                      se::GpuAsmOpts());
-
-    se::DeviceMemory<T> in_backprop_ptr_rz(
-        WrapRedzoneBestEffort(&rz_allocator, in_backprop_ptr));
-
-    std::vector<tensorflow::AutotuneResult> results;
-    for (auto& profile_config : configs) {
-      // TODO(zhengxq): profile each algorithm multiple times to better
-      // accuracy.
-      DnnScratchAllocator scratch_allocator(ConvolveBackwardDataScratchSize,
-                                            ctx);
-      se::RedzoneAllocator rz_scratch_allocator(
-          stream, &tf_allocator_adapter, se::GpuAsmOpts(),
-          /*memory_limit=*/ConvolveBackwardDataScratchSize);
-      se::ScratchAllocator* allocator_used =
-          !RedzoneCheckDisabled()
-              ? static_cast<se::ScratchAllocator*>(&rz_scratch_allocator)
-              : static_cast<se::ScratchAllocator*>(&scratch_allocator);
-      ProfileResult profile_result;
-      Status cudnn_launch_status;
-      if (CudnnUseFrontend()) {
-        cudnn_launch_status = stream->ConvolveBackwardDataWithExecutionPlan(
-            filter_desc, filter_ptr, output_desc, out_backprop_ptr, conv_desc,
-            input_desc, &in_backprop_ptr_rz, allocator_used, profile_config,
-            &profile_result);
-      } else {
-        cudnn_launch_status = stream->ConvolveBackwardDataWithAlgorithm(
-            filter_desc, filter_ptr, output_desc, out_backprop_ptr, conv_desc,
-            input_desc, &in_backprop_ptr_rz, allocator_used, profile_config,
-            &profile_result);
-      }
-
-      if (cudnn_launch_status.ok() && profile_result.is_valid()) {
-        results.emplace_back();
-        auto& result = results.back();
-        if (CudnnUseFrontend()) {
-          result.mutable_cuda_conv_plan()->set_exec_plan_id(
-              profile_config.algorithm()->exec_plan_id());
-        } else {
-          result.mutable_conv()->set_algorithm(
-              profile_config.algorithm()->algo_id());
-          result.mutable_conv()->set_tensor_ops_enabled(
-              profile_config.algorithm()->tensor_ops_enabled());
-        }
-
-        result.set_scratch_bytes(
-            !RedzoneCheckDisabled()
-                ? rz_scratch_allocator.TotalAllocatedBytesExcludingRedzones()
-                : scratch_allocator.TotalByteSize());
-        *result.mutable_run_time() = proto_utils::ToDurationProto(
-            absl::Milliseconds(profile_result.elapsed_time_in_ms()));
-
-        CheckRedzones(rz_scratch_allocator, &result);
-        CheckRedzones(rz_allocator, &result);
-      } else if (CudnnUseFrontend()) {
-        // When CuDNN frontend APIs are used, we need to make sure the profiling
-        // results are one-to-one mapping of the "plans". So, we insert dummy
-        // results when the excution fails.
-        results.emplace_back();
-        auto& result = results.back();
-        result.mutable_failure()->set_kind(AutotuneResult::UNKNOWN);
-        result.mutable_failure()->set_msg(
-            absl::StrCat("Profiling failure on CUDNN engine: ",
-                         profile_config.algorithm()->exec_plan_id()));
-      }
-    }
-#elif TENSORFLOW_USE_ROCM
-    DnnScratchAllocator scratch_allocator(ConvolveBackwardDataScratchSize, ctx);
-    std::vector<ProfileResult> algorithms;
-    OP_REQUIRES(
-        ctx,
-        stream->parent()->GetMIOpenConvolveAlgorithms(
-            se::dnn::ConvolutionKind::BACKWARD_DATA,
-            se::dnn::ToDataType<T>::value, stream, input_desc, in_backprop_ptr,
-            filter_desc, filter_ptr, output_desc, out_backprop_ptr, conv_desc,
-            &scratch_allocator, &algorithms),
-        errors::Unknown(
-            "Failed to get convolution algorithm. This is probably "
-            "because MIOpen failed to initialize, so try looking to "
-            "see if a warning log message was printed above."));
-
-    std::vector<tensorflow::AutotuneResult> results;
-    if (algorithms.size() == 1) {
-      auto profile_result = algorithms[0];
-      results.emplace_back();
-      auto& result = results.back();
-      result.mutable_conv()->set_algorithm(
-          profile_result.algorithm().algo_id());
-      result.mutable_conv()->set_tensor_ops_enabled(
-          profile_result.algorithm().tensor_ops_enabled());
-
-      result.set_scratch_bytes(profile_result.scratch_size());
-      *result.mutable_run_time() = proto_utils::ToDurationProto(
-          absl::Milliseconds(profile_result.elapsed_time_in_ms()));
-    } else {
-      for (auto miopen_algorithm : algorithms) {
-        auto profile_algorithm = miopen_algorithm.algorithm();
-        ProfileResult profile_result;
-        auto miopen_launch_status = stream->ConvolveBackwardDataWithAlgorithm(
-            filter_desc, filter_ptr, output_desc, out_backprop_ptr, conv_desc,
-            input_desc, &in_backprop_ptr, &scratch_allocator,
-            AlgorithmConfig(profile_algorithm, miopen_algorithm.scratch_size()),
-            &profile_result);
-
-        if (miopen_launch_status.ok() && profile_result.is_valid()) {
-          results.emplace_back();
-          auto& result = results.back();
-          result.mutable_conv()->set_algorithm(profile_algorithm.algo_id());
-          result.mutable_conv()->set_tensor_ops_enabled(
-              profile_algorithm.tensor_ops_enabled());
-          result.set_scratch_bytes(scratch_allocator.TotalByteSize());
-          *result.mutable_run_time() = proto_utils::ToDurationProto(
-              absl::Milliseconds(profile_result.elapsed_time_in_ms()));
-        }
-      }
-    }
-#endif
-    LogConvAutotuneResults(
-        se::dnn::ConvolutionKind::BACKWARD_DATA, se::dnn::ToDataType<T>::value,
-        in_backprop_ptr, filter_ptr, out_backprop_ptr, input_desc, filter_desc,
-        output_desc, conv_desc, stream->parent(), results);
-    if (CudnnUseFrontend()) {
-      OP_REQUIRES_OK(
-          ctx, BestCudnnConvAlgorithm(results, &plans, &algorithm_config));
-
-    } else {
-      OP_REQUIRES_OK(
-          ctx, BestCudnnConvAlgorithm(results, nullptr, &algorithm_config));
-    }
-    AutoTuneConvBwdData::GetInstance()->Insert(conv_parameters,
-                                               algorithm_config);
-  }
-
-  Status cudnn_launch_status;
-  if (CudnnUseFrontend()) {
-    if (algorithm_config.algorithm().has_value()) {
-      VLOG(4) << "Conv2DBackpropInput Execution Plan: "
-              << algorithm_config.algorithm()->exec_plan_id();
-    } else {
-      VLOG(4) << "Convolution AutoTune has been turned off";
-    }
-    cudnn_launch_status = stream->ConvolveBackwardDataWithExecutionPlan(
-        filter_desc, filter_ptr, output_desc, out_backprop_ptr, conv_desc,
-        input_desc, &in_backprop_ptr, &scratch_allocator, algorithm_config,
-        nullptr);
-  } else {
-    cudnn_launch_status = stream->ConvolveBackwardDataWithAlgorithm(
-        filter_desc, filter_ptr, output_desc, out_backprop_ptr, conv_desc,
-        input_desc, &in_backprop_ptr, &scratch_allocator, algorithm_config,
-        nullptr);
-  }
-
+  DnnScratchAllocator scratch_allocator(ConvolveBackwardDataScratchSize, ctx);
+  Status cudnn_launch_status =
+      LaunchAutotunedConv(autotune_entry, &scratch_allocator,
+                          se::dnn::ConvolutionKind::BACKWARD_DATA, stream,
+                          input_desc, in_backprop_ptr, filter_desc, filter_ptr,
+                          conv_desc, output_desc, out_backprop_ptr);
   if (!cudnn_launch_status.ok()) {
     ctx->SetStatus(cudnn_launch_status);
     return;
@@ -593,10 +402,10 @@ void LaunchConv2DBackpropInputOp<GPUDevice, T>::operator()(
                  &in_backprop_remove_padding));
 
     // Remove the padding that was added to the input shape above.
-    const int64 input_pad_top = padding_top - common_padding_rows;
-    const int64 input_pad_bottom = padding_bottom - common_padding_rows;
-    const int64 input_pad_left = padding_left - common_padding_cols;
-    const int64 input_pad_right = padding_right - common_padding_cols;
+    const int64_t input_pad_top = padding_top - common_padding_rows;
+    const int64_t input_pad_bottom = padding_bottom - common_padding_rows;
+    const int64_t input_pad_left = padding_left - common_padding_cols;
+    const int64_t input_pad_right = padding_right - common_padding_cols;
     functor::PadInput<GPUDevice, T, int, 4>()(
         ctx->template eigen_device<GPUDevice>(),
         To32Bit(const_cast<const Tensor&>(pre_transformed_in_backprop)
@@ -622,6 +431,69 @@ void LaunchConv2DBackpropInputOp<GPUDevice, T>::operator()(
   }
 }
 
+template <typename T>
+void LaunchConv2DBackpropInputOp<GPUDevice, T>::operator()(
+    OpKernelContext* ctx, bool use_cudnn, bool cudnn_use_autotune,
+    const Tensor& out_backprop, const Tensor& filter, int row_dilation,
+    int col_dilation, int row_stride, int col_stride, const Padding& padding,
+    const std::vector<int64_t>& explicit_paddings, Tensor* in_backprop,
+    TensorFormat data_format) {
+  LaunchConv2DBackpropInputOpGpuImpl<T>(
+      ctx, use_cudnn, cudnn_use_autotune, out_backprop, filter, row_dilation,
+      col_dilation, row_stride, col_stride, padding, explicit_paddings,
+      in_backprop, data_format);
+}
+
+template <>
+void LaunchConv2DBackpropInputOp<GPUDevice, Eigen::bfloat16>::operator()(
+    OpKernelContext* ctx, bool use_cudnn, bool cudnn_use_autotune,
+    const Tensor& out_backprop, const Tensor& filter, int row_dilation,
+    int col_dilation, int row_stride, int col_stride, const Padding& padding,
+    const std::vector<int64_t>& explicit_paddings, Tensor* in_backprop,
+    TensorFormat data_format) {
+  // Performant bfloat16 operations are supported for Ampere+ GPUs. For
+  // pre-Ampere GPUs, we cast inputs to float and outputs back to bfloat16.
+  auto* stream = ctx->op_device_context()->stream();
+  const bool cast_to_float = !stream->GetCudaComputeCapability().IsAtLeast(
+      se::CudaComputeCapability::AMPERE);
+  Tensor casted_out_backprop = out_backprop;
+  Tensor casted_filter = filter;
+  Tensor casted_in_backprop = *in_backprop;
+
+  if (cast_to_float) {
+    const GPUDevice& device = ctx->eigen_device<GPUDevice>();
+    functor::CastFunctor<GPUDevice, float, Eigen::bfloat16> cast;
+    OP_REQUIRES_OK(ctx, ctx->allocate_temp(DT_FLOAT, out_backprop.shape(),
+                                           &casted_out_backprop));
+    cast(device, casted_out_backprop.template flat<float>(),
+         out_backprop.template flat<Eigen::bfloat16>());
+
+    OP_REQUIRES_OK(
+        ctx, ctx->allocate_temp(DT_FLOAT, filter.shape(), &casted_filter));
+    cast(device, casted_filter.template flat<float>(),
+         filter.template flat<Eigen::bfloat16>());
+
+    OP_REQUIRES_OK(ctx, ctx->allocate_temp(DT_FLOAT, in_backprop->shape(),
+                                           &casted_in_backprop));
+
+    LaunchConv2DBackpropInputOpGpuImpl<float>(
+        ctx, use_cudnn, cudnn_use_autotune, casted_out_backprop, casted_filter,
+        row_dilation, col_dilation, row_stride, col_stride, padding,
+        explicit_paddings, &casted_in_backprop, data_format);
+
+    functor::CastFunctor<GPUDevice, Eigen::bfloat16, float> cast_back;
+    const Tensor& casted_in_backprop_const = casted_in_backprop;
+    cast_back(device, in_backprop->template flat<Eigen::bfloat16>(),
+              casted_in_backprop_const.template flat<float>());
+    return;
+  }
+
+  LaunchConv2DBackpropInputOpGpuImpl<Eigen::bfloat16>(
+      ctx, use_cudnn, cudnn_use_autotune, casted_out_backprop, casted_filter,
+      row_dilation, col_dilation, row_stride, col_stride, padding,
+      explicit_paddings, &casted_in_backprop, data_format);
+}
+
 // Forward declarations of the functor specializations for GPU.
 namespace functor {
 #define DECLARE_GPU_SPEC(T)                                             \
@@ -642,6 +514,7 @@ namespace functor {
 
 DECLARE_GPU_SPEC(float);
 DECLARE_GPU_SPEC(Eigen::half);
+DECLARE_GPU_SPEC(Eigen::bfloat16);
 DECLARE_GPU_SPEC(double);
 #undef DECLARE_GPU_SPEC
 
@@ -683,6 +556,11 @@ REGISTER_KERNEL_BUILDER(Name("Conv2DBackpropInput")
                             .TypeConstraint<Eigen::half>("T")
                             .HostMemory("input_sizes"),
                         Conv2DBackpropInputOp<GPUDevice, Eigen::half>);
+REGISTER_KERNEL_BUILDER(Name("Conv2DBackpropInput")
+                            .Device(DEVICE_GPU)
+                            .TypeConstraint<Eigen::bfloat16>("T")
+                            .HostMemory("input_sizes"),
+                        Conv2DBackpropInputOp<GPUDevice, Eigen::bfloat16>);
 REGISTER_KERNEL_BUILDER(Name("Conv2DBackpropInput")
                             .Device(DEVICE_GPU)
                             .TypeConstraint<int32>("T")

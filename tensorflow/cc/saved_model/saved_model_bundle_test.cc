@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/cc/experimental/libexport/metrics.h"
 #include "tensorflow/cc/saved_model/constants.h"
 #include "tensorflow/cc/saved_model/loader.h"
+#include "tensorflow/cc/saved_model/metrics.h"
 #include "tensorflow/cc/saved_model/reader.h"
 #include "tensorflow/cc/saved_model/signature_constants.h"
 #include "tensorflow/cc/saved_model/tag_constants.h"
@@ -31,8 +31,6 @@ limitations under the License.
 
 namespace tensorflow {
 namespace {
-
-namespace metrics = libexport::metrics;
 
 constexpr char kTestDataPbTxt[] =
     "cc/saved_model/testdata/half_plus_two_pbtxt/00000123";
@@ -52,6 +50,10 @@ constexpr char kTestFuzzGeneratedBadNodeAttr[] =
     "cc/saved_model/testdata/fuzz_generated/bad_node_attr";
 constexpr char kTestCyclicModule[] = "cc/saved_model/testdata/CyclicModule";
 constexpr char kTestSimpleV1Model[] = "cc/saved_model/testdata/SimpleV1Model";
+constexpr char kVarsAndArithmeticObjectGraph[] =
+    "cc/saved_model/testdata/VarsAndArithmeticObjectGraph";
+// This is the value in testdata/VarsAndArithmeticObjectGraph/fingerprint.pb
+constexpr char kV2ModuleSavedModelChecksum[] = "15788619162413586750";
 
 class LoaderTest : public ::testing::Test {
  protected:
@@ -356,15 +358,15 @@ TEST_F(LoaderTest, UpdateMetricsV2) {
   RunOptions run_options;
   const string kCCLoadLabel = "cc_load";
 
-  const int read_count = metrics::Read().value();
-  const int api_count = metrics::ReadApi(kCCLoadLabel, "2").value();
+  const int read_count_v2 = metrics::SavedModelRead("2").value();
+  const int api_count = metrics::SavedModelReadApi(kCCLoadLabel).value();
   const string export_dir =
       io::JoinPath(testing::TensorFlowSrcRoot(), kTestCyclicModule);
   TF_ASSERT_OK(LoadSavedModel(session_options, run_options, export_dir,
                               {kSavedModelTagServe}, &bundle));
 
-  EXPECT_EQ(metrics::Read().value(), read_count + 1);
-  EXPECT_EQ(metrics::ReadApi(kCCLoadLabel, "2").value(), api_count + 1);
+  EXPECT_EQ(metrics::SavedModelRead("2").value(), read_count_v2 + 1);
+  EXPECT_EQ(metrics::SavedModelReadApi(kCCLoadLabel).value(), api_count + 1);
 }
 
 TEST_F(LoaderTest, UpdateMetricsV1) {
@@ -373,17 +375,32 @@ TEST_F(LoaderTest, UpdateMetricsV1) {
   RunOptions run_options;
   const string kCCLoadLabel = "cc_load";
 
-  const int read_count = metrics::Read().value();
-  const int api_count = metrics::ReadApi(kCCLoadLabel, "1").value();
-  const int api_count_v2 = metrics::ReadApi(kCCLoadLabel, "2").value();
+  const int read_count_v1 = metrics::SavedModelRead("1").value();
+  const int read_count_v2 = metrics::SavedModelRead("2").value();
+
+  const int api_count = metrics::SavedModelReadApi(kCCLoadLabel).value();
   const string export_dir =
       io::JoinPath(testing::TensorFlowSrcRoot(), kTestSimpleV1Model);
   TF_ASSERT_OK(LoadSavedModel(session_options, run_options, export_dir,
                               {kSavedModelTagServe}, &bundle));
 
-  EXPECT_EQ(metrics::Read().value(), read_count + 1);
-  EXPECT_EQ(metrics::ReadApi(kCCLoadLabel, "1").value(), api_count + 1);
-  EXPECT_EQ(metrics::ReadApi(kCCLoadLabel, "2").value(), api_count_v2);
+  EXPECT_EQ(metrics::SavedModelRead("1").value(), read_count_v1 + 1);
+  EXPECT_EQ(metrics::SavedModelRead("2").value(), read_count_v2);
+  EXPECT_EQ(metrics::SavedModelReadApi(kCCLoadLabel).value(), api_count + 1);
+}
+
+TEST_F(LoaderTest, UpdateFingerprintMetrics) {
+  SavedModelBundle bundle;
+  SessionOptions session_options;
+  RunOptions run_options;
+
+  const string export_dir =
+      io::JoinPath(testing::TensorFlowSrcRoot(), kVarsAndArithmeticObjectGraph);
+  TF_ASSERT_OK(LoadSavedModel(session_options, run_options, export_dir,
+                              {kSavedModelTagServe}, &bundle));
+
+  EXPECT_EQ(metrics::SavedModelReadFingerprint().value(),
+            kV2ModuleSavedModelChecksum);
 }
 
 }  // namespace

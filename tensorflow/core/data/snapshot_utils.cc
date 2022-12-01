@@ -30,8 +30,6 @@ limitations under the License.
 #include "tensorflow/core/lib/io/buffered_inputstream.h"
 #include "tensorflow/core/lib/io/random_inputstream.h"
 #include "tensorflow/core/lib/io/record_writer.h"
-#include "tensorflow/core/lib/io/snappy/snappy_inputbuffer.h"
-#include "tensorflow/core/lib/io/snappy/snappy_outputbuffer.h"
 #include "tensorflow/core/lib/io/zlib_compression_options.h"
 #include "tensorflow/core/lib/io/zlib_inputstream.h"
 #include "tensorflow/core/lib/io/zlib_outputbuffer.h"
@@ -44,6 +42,8 @@ limitations under the License.
 #include "tensorflow/core/platform/stringprintf.h"
 #include "tensorflow/core/profiler/lib/traceme.h"
 #include "tensorflow/core/protobuf/snapshot.pb.h"
+#include "tensorflow/tsl/lib/io/snappy/snappy_inputbuffer.h"
+#include "tensorflow/tsl/lib/io/snappy/snappy_outputbuffer.h"
 
 namespace tensorflow {
 namespace data {
@@ -60,9 +60,9 @@ constexpr const char* const kStartIndex = "start_index";
 
 }  // namespace
 
-/* static */ constexpr const int64
+/* static */ constexpr const int64_t
     CustomReader::kSnappyReaderInputBufferSizeBytes;
-/* static */ constexpr const int64
+/* static */ constexpr const int64_t
     CustomReader::kSnappyReaderOutputBufferSizeBytes;
 
 std::string HashDirectory(const std::string& path, uint64 hash) {
@@ -81,7 +81,7 @@ std::string RunDirectory(const std::string& hash_directory,
   return io::JoinPath(hash_directory, run_id);
 }
 
-std::string ShardDirectory(const std::string& run_directory, int64 shard_id) {
+std::string ShardDirectory(const std::string& run_directory, int64_t shard_id) {
   return io::JoinPath(
       run_directory,
       strings::Printf("%08llu%s", static_cast<unsigned long long>(shard_id),
@@ -102,11 +102,11 @@ Status Writer::Create(Env* env, const std::string& filename,
   switch (version) {
     case 1:
       *out_writer =
-          absl::make_unique<CustomWriter>(filename, compression_type, dtypes);
+          std::make_unique<CustomWriter>(filename, compression_type, dtypes);
       break;
     case 2:
       *out_writer =
-          absl::make_unique<TFRecordWriter>(filename, compression_type);
+          std::make_unique<TFRecordWriter>(filename, compression_type);
       break;
     default:
       return errors::InvalidArgument("Snapshot writer version: ", version,
@@ -123,10 +123,10 @@ TFRecordWriter::TFRecordWriter(const std::string& filename,
 Status TFRecordWriter::Initialize(tensorflow::Env* env) {
   TF_RETURN_IF_ERROR(env->NewAppendableFile(filename_, &dest_));
 
-  record_writer_ = absl::make_unique<io::RecordWriter>(
+  record_writer_ = std::make_unique<io::RecordWriter>(
       dest_.get(), io::RecordWriterOptions::CreateRecordWriterOptions(
                        /*compression_type=*/compression_type_));
-  return Status::OK();
+  return OkStatus();
 }
 
 Status TFRecordWriter::WriteTensors(const std::vector<Tensor>& tensors) {
@@ -147,7 +147,7 @@ Status TFRecordWriter::WriteTensors(const std::vector<Tensor>& tensors) {
     TF_RETURN_IF_ERROR(record_writer_->WriteRecord(proto.SerializeAsString()));
 #endif  // TF_CORD_SUPPORT
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 Status TFRecordWriter::Sync() {
@@ -163,7 +163,7 @@ Status TFRecordWriter::Close() {
     record_writer_ = nullptr;
     dest_ = nullptr;
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 TFRecordWriter::~TFRecordWriter() {
@@ -211,7 +211,7 @@ Status CustomWriter::Initialize(tensorflow::Env* env) {
     }
   }
 
-  return Status::OK();
+  return OkStatus();
 }
 
 Status CustomWriter::WriteTensors(const std::vector<Tensor>& tensors) {
@@ -238,13 +238,13 @@ Status CustomWriter::WriteTensors(const std::vector<Tensor>& tensors) {
   std::vector<TensorProto> tensor_protos;
   tensor_protos.reserve(num_complex_);
   experimental::SnapshotTensorMetadata metadata;
-  int64 total_size = 0;
+  int64_t total_size = 0;
   for (int i = 0, end = tensors.size(); i < end; ++i) {
     const Tensor& tensor = tensors[i];
     experimental::TensorMetadata* tensor_metadata =
         metadata.add_tensor_metadata();
     tensor.shape().AsProto(tensor_metadata->mutable_tensor_shape());
-    int64 size = 0;
+    int64_t size = 0;
     if (simple_tensor_mask_[i]) {
       auto tensor_buffer = DMAHelper::buffer(&tensor);
       tensor_buffers.push_back(tensor_buffer);
@@ -279,7 +279,7 @@ Status CustomWriter::WriteTensors(const std::vector<Tensor>& tensors) {
   DCHECK_EQ(position, uncompressed.data() + total_size);
 
   string output;
-  if (!port::Snappy_Compress(uncompressed.data(), total_size, &output)) {
+  if (!tsl::port::Snappy_Compress(uncompressed.data(), total_size, &output)) {
     return errors::Internal("Failed to compress using snappy.");
   }
 
@@ -294,7 +294,7 @@ Status CustomWriter::WriteTensors(const std::vector<Tensor>& tensors) {
 #endif  // TF_CORD_SUPPORT
   TF_RETURN_IF_ERROR(WriteRecord(metadata_serialized));
   TF_RETURN_IF_ERROR(WriteRecord(output));
-  return Status::OK();
+  return OkStatus();
 }
 
 Status CustomWriter::Sync() { return dest_->Sync(); }
@@ -308,7 +308,7 @@ Status CustomWriter::Close() {
     TF_RETURN_IF_ERROR(zlib_underlying_dest_->Close());
     zlib_underlying_dest_ = nullptr;
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 CustomWriter::~CustomWriter() {
@@ -344,12 +344,12 @@ Status Reader::Create(Env* env, const std::string& filename,
     // strictly worse than V1.
     case 0:
     case 1:
-      *out_reader = absl::make_unique<CustomReader>(filename, compression_type,
-                                                    version, dtypes);
+      *out_reader = std::make_unique<CustomReader>(filename, compression_type,
+                                                   version, dtypes);
       break;
     case 2:
       *out_reader =
-          absl::make_unique<TFRecordReader>(filename, compression_type, dtypes);
+          std::make_unique<TFRecordReader>(filename, compression_type, dtypes);
       break;
     default:
       return errors::InvalidArgument("Snapshot reader version: ", version,
@@ -359,22 +359,22 @@ Status Reader::Create(Env* env, const std::string& filename,
   return (*out_reader)->Initialize(env);
 }
 
-Status Reader::SkipRecords(int64 num_records) {
+Status Reader::SkipRecords(int64_t num_records) {
   // TODO(frankchn): Optimize to not parse the entire Tensor and actually skip.
   for (int i = 0; i < num_records; ++i) {
     std::vector<Tensor> unused_tensors;
     TF_RETURN_IF_ERROR(ReadTensors(&unused_tensors));
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 class Reader::Dataset : public DatasetBase {
  public:
   Dataset(DatasetContext&& ctx, const std::string& shard_dir,
-          const std::string& compression, const int64 version,
+          const std::string& compression, const int64_t version,
           const DataTypeVector& dtypes,
           const std::vector<PartialTensorShape>& shapes,
-          const int64 start_index)
+          const int64_t start_index)
       : DatasetBase(std::move(ctx)),
         shard_dir_(shard_dir),
         compression_(compression),
@@ -392,10 +392,10 @@ class Reader::Dataset : public DatasetBase {
   std::string DebugString() const override { return "SnapshotDatasetReader"; }
 
   Status InputDatasets(std::vector<const DatasetBase*>* inputs) const override {
-    return Status::OK();
+    return OkStatus();
   }
 
-  Status CheckExternalState() const override { return Status::OK(); }
+  Status CheckExternalState() const override { return OkStatus(); }
 
  protected:
   Status AsGraphDefInternal(SerializationContext* ctx,
@@ -425,7 +425,7 @@ class Reader::Dataset : public DatasetBase {
 
   std::unique_ptr<IteratorBase> MakeIteratorInternal(
       const string& prefix) const override {
-    return absl::make_unique<Iterator>(Iterator::Params{
+    return std::make_unique<Iterator>(Iterator::Params{
         this, name_utils::IteratorPrefix(node_name(), prefix)});
   }
 
@@ -459,7 +459,7 @@ class Reader::Dataset : public DatasetBase {
       Status status = AdvanceToNextFile(ctx->env());
       if (errors::IsNotFound(status)) {
         *end_of_sequence = true;
-        return Status::OK();
+        return OkStatus();
       }
       return status;
     }
@@ -470,7 +470,7 @@ class Reader::Dataset : public DatasetBase {
                                              current_checkpoint_id_));
       TF_RETURN_IF_ERROR(
           writer->WriteScalar(full_name(kStartIndex), start_index_));
-      return Status::OK();
+      return OkStatus();
     }
 
     Status RestoreInternal(IteratorContext* ctx,
@@ -502,11 +502,11 @@ class Reader::Dataset : public DatasetBase {
 
     // TODO(frankchn): Optimize this to not parse every single element.
     Status AdvanceToStartIndex(IteratorContext* ctx) {
-      for (int64 i = 0; i < start_index_; ++i) {
+      for (int64_t i = 0; i < start_index_; ++i) {
         std::vector<Tensor> unused;
         TF_RETURN_IF_ERROR(reader_->ReadTensors(&unused));
       }
-      return Status::OK();
+      return OkStatus();
     }
 
     std::unique_ptr<Reader> reader_;
@@ -514,16 +514,16 @@ class Reader::Dataset : public DatasetBase {
     // Stores the id current checkpoint file that we are in the process of
     // reading (e.g. if the file is currently 00000001.snapshot, then this will
     // be 1).
-    int64 current_checkpoint_id_ = 0;
-    int64 start_index_;
+    int64_t current_checkpoint_id_ = 0;
+    int64_t start_index_;
   };
 
   const tstring shard_dir_;
   const std::string compression_;
-  const int64 version_;
+  const int64_t version_;
   const DataTypeVector dtypes_;
   const std::vector<PartialTensorShape> shapes_;
-  const int64 start_index_;
+  const int64_t start_index_;
 };
 
 Reader::DatasetOp::DatasetOp(OpKernelConstruction* ctx) : DatasetOpKernel(ctx) {
@@ -538,7 +538,7 @@ void Reader::DatasetOp::MakeDataset(OpKernelContext* ctx,
   tstring shard_dir;
   OP_REQUIRES_OK(ctx, ParseScalarArgument(ctx, "shard_dir", &shard_dir));
 
-  int64 start_index;
+  int64_t start_index;
   OP_REQUIRES_OK(ctx, ParseScalarArgument(ctx, "start_index", &start_index));
 
   *output =
@@ -552,7 +552,7 @@ class Reader::NestedDataset : public DatasetBase {
                          std::vector<DatasetBase*> datasets)
       : DatasetBase(std::move(ctx)), datasets_(datasets) {
     dtypes_.push_back(DT_VARIANT);
-    gtl::InlinedVector<int64, 1> element_dim_sizes;
+    gtl::InlinedVector<int64_t, 1> element_dim_sizes;
     element_dim_sizes.push_back(1);
     partial_shapes_.emplace_back(element_dim_sizes);
   }
@@ -569,10 +569,10 @@ class Reader::NestedDataset : public DatasetBase {
 
   Status InputDatasets(std::vector<const DatasetBase*>* inputs) const override {
     inputs->clear();
-    return Status::OK();
+    return OkStatus();
   }
 
-  Status CheckExternalState() const override { return Status::OK(); }
+  Status CheckExternalState() const override { return OkStatus(); }
 
  protected:
   Status AsGraphDefInternal(SerializationContext* ctx,
@@ -589,12 +589,12 @@ class Reader::NestedDataset : public DatasetBase {
         b->AddDataset(this, /*inputs=*/{},
                       /*list_inputs=*/{std::make_pair(0, input_graph_nodes)},
                       /*attrs=*/{}, node));
-    return Status::OK();
+    return OkStatus();
   }
 
   std::unique_ptr<IteratorBase> MakeIteratorInternal(
       const string& prefix) const override {
-    return absl::make_unique<Iterator>(Iterator::Params{
+    return std::make_unique<Iterator>(Iterator::Params{
         this, name_utils::IteratorPrefix(node_name(), prefix)});
   }
 
@@ -612,7 +612,7 @@ class Reader::NestedDataset : public DatasetBase {
     Status GetNextInternal(IteratorContext* ctx,
                            std::vector<Tensor>* out_tensors,
                            bool* end_of_sequence) override {
-      const int64 num_datasets = dataset()->datasets_.size();
+      const int64_t num_datasets = dataset()->datasets_.size();
       *end_of_sequence = num_datasets == index_;
       if (!*end_of_sequence) {
         Tensor tensor(DT_VARIANT, TensorShape({}));
@@ -624,23 +624,23 @@ class Reader::NestedDataset : public DatasetBase {
 
         index_++;
       }
-      return Status::OK();
+      return OkStatus();
     }
 
     Status SaveInternal(SerializationContext* ctx,
                         IteratorStateWriter* writer) override {
       TF_RETURN_IF_ERROR(writer->WriteScalar(full_name(kIndex), index_));
-      return Status::OK();
+      return OkStatus();
     }
 
     Status RestoreInternal(IteratorContext* ctx,
                            IteratorStateReader* reader) override {
       TF_RETURN_IF_ERROR(reader->ReadScalar(full_name(kIndex), &index_));
-      return Status::OK();
+      return OkStatus();
     }
 
    private:
-    int64 index_ = 0;
+    int64_t index_ = 0;
   };
 };
 
@@ -659,7 +659,7 @@ void Reader::NestedDatasetOp::MakeDataset(OpKernelContext* ctx,
     inputs.push_back(input);
   }
   *output = new Reader::NestedDataset(DatasetContext(ctx), inputs);
-  (*output)->Initialize();
+  (*output)->Initialize(/*metadata=*/{});
 }
 
 Status Reader::MakeNestedDataset(Env* env,
@@ -667,15 +667,15 @@ Status Reader::MakeNestedDataset(Env* env,
                                  const string& compression_type, int version,
                                  const DataTypeVector& dtypes,
                                  const std::vector<PartialTensorShape>& shapes,
-                                 const int64 start_index,
+                                 const int64_t start_index,
                                  DatasetBase** output) {
   std::vector<DatasetBase*> datasets;
 
   datasets.reserve(shard_dirs.size());
-  for (int64 i = 0; i < shard_dirs.size(); ++i) {
+  for (int64_t i = 0; i < shard_dirs.size(); ++i) {
     // TODO(frankchn): The reading pattern could be controlled in a non-round
     // robin fashion, so we cannot assume a round-robin manner when restoring.
-    int64 dataset_start_index = start_index / shard_dirs.size();
+    int64_t dataset_start_index = start_index / shard_dirs.size();
     if (start_index % shard_dirs.size() > datasets.size()) {
       dataset_start_index++;
     }
@@ -686,7 +686,7 @@ Status Reader::MakeNestedDataset(Env* env,
                          strings::StrCat("SnapshotDatasetReader/_", i)})),
                     shard_dirs.at(i), compression_type, version, dtypes, shapes,
                     dataset_start_index));
-    datasets.back()->Initialize();
+    datasets.back()->Initialize(/*metadata=*/{});
   }
 
   // Rotate the vector such that the first dataset contains the next element
@@ -702,8 +702,8 @@ Status Reader::MakeNestedDataset(Env* env,
       DatasetContext(DatasetContext::Params(
           {"SnapshotNestedDatasetReader", "SnapshotNestedDatasetReader"})),
       datasets);
-  (*output)->Initialize();
-  return Status::OK();
+  (*output)->Initialize(/*metadata=*/{});
+  return OkStatus();
 }
 
 TFRecordReader::TFRecordReader(const std::string& filename,
@@ -717,10 +717,10 @@ TFRecordReader::TFRecordReader(const std::string& filename,
 Status TFRecordReader::Initialize(Env* env) {
   TF_RETURN_IF_ERROR(env->NewRandomAccessFile(filename_, &file_));
 
-  record_reader_ = absl::make_unique<io::RecordReader>(
+  record_reader_ = std::make_unique<io::RecordReader>(
       file_.get(), io::RecordReaderOptions::CreateRecordReaderOptions(
                        /*compression_type=*/compression_type_));
-  return Status::OK();
+  return OkStatus();
 }
 
 Status TFRecordReader::ReadTensors(std::vector<Tensor>* read_tensors) {
@@ -739,7 +739,7 @@ Status TFRecordReader::ReadTensors(std::vector<Tensor>* read_tensors) {
 
     read_tensors->push_back(std::move(tensor));
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 CustomReader::CustomReader(const std::string& filename,
@@ -764,17 +764,17 @@ Status CustomReader::Initialize(Env* env) {
     io::ZlibCompressionOptions zlib_options;
     zlib_options = io::ZlibCompressionOptions::GZIP();
 
-    input_stream_ = absl::make_unique<io::ZlibInputStream>(
+    input_stream_ = std::make_unique<io::ZlibInputStream>(
         input_stream_.release(), zlib_options.input_buffer_size,
         zlib_options.output_buffer_size, zlib_options, true);
   } else if (compression_type_ == io::compression::kSnappy) {
     if (version_ == 0) {
-      input_stream_ = absl::make_unique<io::SnappyInputBuffer>(
+      input_stream_ = std::make_unique<tsl::io::SnappyInputBuffer>(
           file_.get(), /*input_buffer_bytes=*/kSnappyReaderInputBufferSizeBytes,
           /*output_buffer_bytes=*/kSnappyReaderOutputBufferSizeBytes);
     } else {
       input_stream_ =
-          absl::make_unique<io::BufferedInputStream>(file_.get(), 64 << 20);
+          std::make_unique<io::BufferedInputStream>(file_.get(), 64 << 20);
     }
   }
 #endif  // IS_SLIM_BUILD
@@ -789,7 +789,7 @@ Status CustomReader::Initialize(Env* env) {
     }
   }
 
-  return Status::OK();
+  return OkStatus();
 }
 
 Status CustomReader::ReadTensors(std::vector<Tensor>* read_tensors) {
@@ -843,7 +843,7 @@ Status CustomReader::ReadTensors(std::vector<Tensor>* read_tensors) {
       complex_index++;
     }
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 Status CustomReader::ReadTensorsV0(std::vector<Tensor>* read_tensors) {
@@ -864,7 +864,7 @@ Status CustomReader::ReadTensorsV0(std::vector<Tensor>* read_tensors) {
       return errors::DataLoss("Unable to parse tensor from proto.");
     }
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 Status CustomReader::SnappyUncompress(
@@ -875,15 +875,15 @@ Status CustomReader::SnappyUncompress(
   tstring compressed;
   TF_RETURN_IF_ERROR(ReadRecord(&compressed));
   size_t size;
-  if (!port::Snappy_GetUncompressedLength(compressed.data(), compressed.size(),
-                                          &size)) {
+  if (!tsl::port::Snappy_GetUncompressedLength(compressed.data(),
+                                               compressed.size(), &size)) {
     return errors::Internal("Could not get snappy uncompressed length");
   }
 
   int num_tensors = metadata->tensor_metadata_size();
-  std::vector<struct iovec> iov(num_tensors);
+  std::vector<tsl::iovec> iov(num_tensors);
   int index = 0;
-  int64 total_size = 0;
+  int64_t total_size = 0;
   for (int i = 0, end = simple_tensor_mask_.size(); i < end; ++i) {
     const auto& tensor_metadata = metadata->tensor_metadata(i);
     if (simple_tensor_mask_[i]) {
@@ -895,7 +895,7 @@ Status CustomReader::SnappyUncompress(
       simple_tensors->push_back(std::move(simple_tensor));
     } else {
       auto tensor_proto_str =
-          absl::make_unique<char[]>(tensor_metadata.tensor_size_bytes());
+          std::make_unique<char[]>(tensor_metadata.tensor_size_bytes());
       iov[index].iov_base = tensor_proto_str.get();
       iov[index].iov_len = tensor_metadata.tensor_size_bytes();
       tensor_proto_strs->push_back(std::make_pair(
@@ -904,17 +904,17 @@ Status CustomReader::SnappyUncompress(
     total_size += iov[index].iov_len;
     index++;
   }
-  const int64 size_int = size;
+  const int64_t size_int = size;
   if (size_int != total_size) {
     return errors::Internal("Uncompressed size mismatch. Snappy expects ", size,
                             " whereas the tensor metadata suggests ",
                             total_size);
   }
-  if (!port::Snappy_UncompressToIOVec(compressed.data(), compressed.size(),
-                                      iov.data(), num_tensors)) {
+  if (!tsl::port::Snappy_UncompressToIOVec(compressed.data(), compressed.size(),
+                                           iov.data(), num_tensors)) {
     return errors::Internal("Failed to perform snappy decompression.");
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 Status CustomReader::ReadRecord(tstring* record) {
@@ -937,7 +937,7 @@ Status CustomReader::ReadRecord(absl::Cord* record) {
     absl::string_view tmp_str_view(*tmp_str);
     record->Append(absl::MakeCordFromExternal(
         tmp_str_view, [tmp_str](absl::string_view) { delete tmp_str; }));
-    return Status::OK();
+    return OkStatus();
   }
 }
 #endif  // TF_CORD_SUPPORT
@@ -962,7 +962,7 @@ Status ReadMetadataFile(Env* env, const string& dir,
   if (*file_exists) {
     return ReadBinaryProto(env, metadata_filename, metadata);
   } else {
-    return Status::OK();
+    return OkStatus();
   }
 }
 
@@ -989,50 +989,50 @@ Status DetermineOpState(const std::string& mode_string, bool file_exists,
     }
     LOG(INFO) << "Overriding mode to reader.";
     *mode = READER;
-    return Status::OK();
+    return OkStatus();
   }
 
   if (mode_string == kModeWrite) {
     LOG(INFO) << "Overriding mode to writer.";
     *mode = WRITER;
-    return Status::OK();
+    return OkStatus();
   }
 
   if (mode_string == kModePassthrough) {
     LOG(INFO) << "Overriding mode to passthrough.";
     *mode = PASSTHROUGH;
-    return Status::OK();
+    return OkStatus();
   }
 
   if (!file_exists) {
     *mode = WRITER;
-    return Status::OK();
+    return OkStatus();
   }
 
   if (metadata->finalized()) {
     // File found, snapshot has been finalized.
     *mode = READER;
-    return Status::OK();
+    return OkStatus();
   }
 
-  int64 expiration_timer = static_cast<int64>(EnvTime::NowMicros()) -
-                           pending_snapshot_expiry_seconds * 1000000;
+  int64_t expiration_timer = static_cast<int64_t>(EnvTime::NowMicros()) -
+                             pending_snapshot_expiry_seconds * 1000000;
 
   if (metadata->creation_timestamp() >= expiration_timer) {
     // Someone else is already writing and time has not expired.
     *mode = PASSTHROUGH;
-    return Status::OK();
+    return OkStatus();
   } else {
     // Time has expired, we write regardless.
     *mode = WRITER;
-    return Status::OK();
+    return OkStatus();
   }
 }
 
-AsyncWriter::AsyncWriter(Env* env, int64 file_index,
+AsyncWriter::AsyncWriter(Env* env, int64_t file_index,
                          const std::string& shard_directory,
                          uint64 checkpoint_id, const std::string& compression,
-                         int64 version, const DataTypeVector& output_types,
+                         int64_t version, const DataTypeVector& output_types,
                          std::function<void(Status)> done) {
   thread_ = absl::WrapUnique(env->StartThread(
       ThreadOptions(), absl::StrCat("writer_thread_", file_index),
@@ -1068,8 +1068,8 @@ bool AsyncWriter::ElementAvailable() { return !deque_.empty(); }
 
 Status AsyncWriter::WriterThread(Env* env, const std::string& shard_directory,
                                  uint64 checkpoint_id,
-                                 const std::string& compression, int64 version,
-                                 DataTypeVector output_types) {
+                                 const std::string& compression,
+                                 int64_t version, DataTypeVector output_types) {
   std::unique_ptr<snapshot_util::Writer> writer;
   TF_RETURN_IF_ERROR(env->RecursivelyCreateDir(shard_directory));
 
@@ -1088,7 +1088,7 @@ Status AsyncWriter::WriterThread(Env* env, const std::string& shard_directory,
 
     TF_RETURN_IF_ERROR(writer->WriteTensors(be.value));
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 namespace {

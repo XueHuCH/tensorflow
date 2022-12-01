@@ -15,12 +15,13 @@ limitations under the License.
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+#include "tensorflow/core/common_runtime/device/device_event_mgr.h"
+
 #include <atomic>
 
-#include "tensorflow/core/common_runtime/device/device_event_mgr.h"
+#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_init.h"
 #include "tensorflow/core/common_runtime/dma_helper.h"
 #include "tensorflow/core/common_runtime/gpu/gpu_device.h"
-#include "tensorflow/core/common_runtime/gpu/gpu_init.h"
 #include "tensorflow/core/common_runtime/gpu/gpu_process_state.h"
 #include "tensorflow/core/framework/fake_input.h"
 #include "tensorflow/core/framework/node_def.pb.h"
@@ -33,6 +34,7 @@ limitations under the License.
 #include "tensorflow/core/platform/test_benchmark.h"
 #include "tensorflow/core/protobuf/config.pb.h"
 #include "tensorflow/core/public/version.h"
+#include "tensorflow/tsl/framework/device_id.h"
 
 namespace tensorflow {
 
@@ -109,7 +111,7 @@ class TestTensorBuffer : public TensorBuffer {
 namespace {
 
 TEST(EventMgr, Empty) {
-  auto stream_exec = GPUMachineManager()->ExecutorForDevice(0).ValueOrDie();
+  auto stream_exec = se::GPUMachineManager()->ExecutorForDevice(0).value();
   TEST_EventMgr em(stream_exec, GPUOptions());
   TEST_EventMgrHelper th(&em);
   EXPECT_EQ(0, th.queue_size());
@@ -118,7 +120,7 @@ TEST(EventMgr, Empty) {
 
 // Tests that WarnIfInCallback() triggers correctly.
 TEST(EventMgr, WarnIfInCallback) {
-  auto stream_exec = GPUMachineManager()->ExecutorForDevice(0).ValueOrDie();
+  auto stream_exec = se::GPUMachineManager()->ExecutorForDevice(0).value();
   TEST_EventMgr em(stream_exec, GPUOptions());
   TEST_EventMgrHelper th(&em);
   std::unique_ptr<se::Stream> stream(new se::Stream(stream_exec));
@@ -149,8 +151,9 @@ class GPUDeviceTestHelper {
         DeviceFactory::NewDevice(DEVICE_GPU, sops, "/job:a/replica:0/task:0");
     gpu_.reset(reinterpret_cast<BaseGPUDevice*>(device_.release()));
     gpu_allocator_ = GPUProcessState::singleton()->GetGPUAllocator(
-        GPUOptions(), TfDeviceId(0), memory_limit, /*peer_gpu_ids=*/{});
-    host_allocator_ = GPUProcessState::singleton()->GetGpuHostAllocator(0);
+        GPUOptions(), tsl::TfDeviceId(0), memory_limit, /*peer_gpu_ids=*/{});
+    host_allocator_ = GPUProcessState::singleton()->GetGpuHostAllocator(
+        /*options=*/{}, /*numa_node=*/0);
   }
 
   BaseGPUDevice* gpu() { return gpu_.get(); }
@@ -312,18 +315,17 @@ class EMBenchmarkHelper {
       add_inputs_[0] = TensorValue(&gpu_inputs_[0]);
       add_inputs_[1] = TensorValue(&gpu_inputs_[1]);
     }
-    params->inputs = &add_inputs_;
-    params->input_alloc_attrs = nullptr;
+    params->inputs = add_inputs_;
     SetOutputAttrs(params, &allocator_attrs_);
   }
 
   struct TimeSet {
     int iter = 0;
-    int64 start = 0;
-    int64 copy_done = 0;
-    int64 compute_done = 0;
-    int64 final_copy = 0;
-    int64 all_done = 0;
+    int64_t start = 0;
+    int64_t copy_done = 0;
+    int64_t compute_done = 0;
+    int64_t final_copy = 0;
+    int64_t all_done = 0;
   };
 
   // Display sampled iteration times giving the approximate breakdown
@@ -342,7 +344,7 @@ class EMBenchmarkHelper {
       }
     };
     std::sort(times->begin(), times->end(), TSSort());
-    int64 last_time = 0;
+    int64_t last_time = 0;
     // Display first, last and every > 5% change.
     for (int i = 0; i < times->size(); ++i) {
       if (i == (times->size() - 1) ||
@@ -382,7 +384,7 @@ class EMBenchmarkHelper {
       }
       gpu_helper_->h2d_stream()->ThenWaitFor(gpu_helper_->compute_stream());
       // Begin by copying the input values from CPU to GPU.
-      const int64 src_bytes = host_inputs_[0].TotalBytes();
+      const int64_t src_bytes = host_inputs_[0].TotalBytes();
       se::DeviceMemoryBase gpu_dst_ptr0(DMAHelper::base(&gpu_inputs_[0]),
                                         src_bytes);
       gpu_helper_->h2d_stream()->ThenMemcpy(
@@ -416,7 +418,7 @@ class EMBenchmarkHelper {
             });
       }
       gpu_helper_->d2h_stream()->ThenWaitFor(gpu_helper_->compute_stream());
-      const int64 return_bytes = ctx->mutable_output(0)->TotalBytes();
+      const int64_t return_bytes = ctx->mutable_output(0)->TotalBytes();
       se::DeviceMemoryBase gpu_src_ptr(DMAHelper::base(ctx->mutable_output(0)),
                                        return_bytes);
       gpu_helper_->d2h_stream()->ThenMemcpy(DMAHelper::base(&host_outputs_[0]),
@@ -437,7 +439,7 @@ static void BM_no_ops(::testing::benchmark::State& state) {
   const int threads = state.range(0);
   const int iters = state.max_iterations;
 
-  auto stream_exec = GPUMachineManager()->ExecutorForDevice(0).ValueOrDie();
+  auto stream_exec = se::GPUMachineManager()->ExecutorForDevice(0).value();
   std::unique_ptr<se::Stream> stream(new se::Stream(stream_exec));
   CHECK(stream);
   stream->Init();

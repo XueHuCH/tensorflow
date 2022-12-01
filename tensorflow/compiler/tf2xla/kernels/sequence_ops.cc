@@ -56,9 +56,12 @@ StatusOr<xla::XlaOp> CreateRangeTensor(const xla::LiteralSlice& start_literal,
           "Requires start >= limit when delta < 0: ", start, "/", limit);
     }
   }
-  int64 size =
+  int64_t size =
       (std::is_integral<T>::value
-           ? ((std::abs(limit - start) + std::abs(delta) - 1) / std::abs(delta))
+           ? static_cast<T>(
+                 limit == start
+                     ? 0
+                     : (std::abs(limit - start) - 1) / std::abs(delta) + 1)
            : std::ceil(std::abs((limit - start) / delta)));
 
   return xla::ConstantR0(builder, start) +
@@ -98,7 +101,8 @@ class RangeOp : public XlaOpKernel {
         output = CreateRangeTensor<int32>(start, limit, delta, ctx->builder());
         break;
       case DT_INT64:
-        output = CreateRangeTensor<int64>(start, limit, delta, ctx->builder());
+        output =
+            CreateRangeTensor<int64_t>(start, limit, delta, ctx->builder());
         break;
       case DT_FLOAT:
         output = CreateRangeTensor<float>(start, limit, delta, ctx->builder());
@@ -127,15 +131,15 @@ class RangeOp : public XlaOpKernel {
                              xla::One(ctx->builder(), ctx->input_xla_type(0))) /
                             xla::Abs(delta);
         dynamic_size = xla::ConvertElementType(dynamic_size, xla::S32);
-        output = xla::SetDimensionSize(output.ValueOrDie(), dynamic_size, 0);
+        output = xla::SetDimensionSize(output.value(), dynamic_size, 0);
       } else {
         auto dynamic_size = (xla::Ceil(xla::Abs((limit - start) / delta)));
         dynamic_size = xla::ConvertElementType(dynamic_size, xla::S32);
-        output = xla::SetDimensionSize(output.ValueOrDie(), dynamic_size, 0);
+        output = xla::SetDimensionSize(output.value(), dynamic_size, 0);
       }
     }
 
-    ctx->SetOutput(0, output.ValueOrDie());
+    ctx->SetOutput(0, output.value());
   }
 };
 
@@ -163,7 +167,7 @@ class LinSpaceOp : public XlaOpKernel {
                 errors::InvalidArgument("num must be a scalar, not shape ",
                                         num_in_shape.DebugString()));
 
-    int64 num;
+    int64_t num;
     OP_REQUIRES_OK(ctx, ctx->ConstantInputAsIntScalar("num", &num));
     OP_REQUIRES(ctx, num > 0,
                 errors::InvalidArgument("Requires num > 0: ", num));

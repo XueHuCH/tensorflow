@@ -18,11 +18,10 @@ limitations under the License.
 
 #include <vector>
 
+#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
 #include "tensorflow/compiler/xla/service/gpu/buffer_allocations.h"
-#include "tensorflow/compiler/xla/service/gpu/hlo_execution_profiler.h"
 #include "tensorflow/compiler/xla/service/gpu/thunk.h"
-#include "tensorflow/compiler/xla/service/hlo_instruction.h"
-#include "tensorflow/core/platform/stream_executor_no_cuda.h"
+#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
 
 namespace xla {
 namespace gpu {
@@ -36,6 +35,7 @@ class SequentialThunk : public Thunk {
   SequentialThunk(const SequentialThunk&) = delete;
   SequentialThunk& operator=(const SequentialThunk&) = delete;
 
+  ThunkSequence& thunks() { return thunks_; }
   const ThunkSequence& thunks() const { return thunks_; }
   std::string ToStringExtra(int indent) const override;
 

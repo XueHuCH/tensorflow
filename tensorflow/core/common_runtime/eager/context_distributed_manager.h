@@ -16,13 +16,18 @@ limitations under the License.
 #ifndef TENSORFLOW_CORE_COMMON_RUNTIME_EAGER_CONTEXT_DISTRIBUTED_MANAGER_H_
 #define TENSORFLOW_CORE_COMMON_RUNTIME_EAGER_CONTEXT_DISTRIBUTED_MANAGER_H_
 
+#include <memory>
+#include <string>
+#include <utility>
+
 #include "tensorflow/c/eager/immediate_execution_context.h"
 #include "tensorflow/c/eager/immediate_execution_distributed_manager.h"
 #include "tensorflow/core/common_runtime/eager/context.h"
 #include "tensorflow/core/platform/status.h"
 
 #if !defined(IS_MOBILE_PLATFORM)
-#include "tensorflow/core/distributed_runtime/coordination/coordination_service.h"
+#include "tensorflow/tsl/distributed_runtime/coordination/coordination_service_agent.h"
+#include "tensorflow/tsl/distributed_runtime/preemption/preemption_notifier.h"
 #endif  // !IS_MOBILE_PLATFORM
 
 namespace tensorflow {
@@ -44,13 +49,22 @@ class EagerContextDistributedManager
   Status CheckRemoteAlive(const std::string& remote_task_name,
                           bool* is_alive) override;
 
-  CoordinationServiceInterface* GetCoordinationService() override {
-    return coordination_service_.get();
+  tsl::CoordinationServiceAgent* GetCoordinationServiceAgent() override {
+    return coordination_service_agent_;
+  }
+  void SetCoordinationServiceAgent(tsl::CoordinationServiceAgent* agent) {
+    coordination_service_agent_ = agent;
+  }
+  void SetPreemptionNotifier(
+      std::unique_ptr<tsl::PreemptionNotifier> notifier) {
+    preemption_notifier_ = std::move(notifier);
   }
 
  private:
   EagerContext* context_;
-  std::unique_ptr<CoordinationServiceInterface> coordination_service_;
+  // Owned by context_->GetServer()->worker_env()->session_mgr.
+  tsl::CoordinationServiceAgent* coordination_service_agent_ = nullptr;
+  std::unique_ptr<tsl::PreemptionNotifier> preemption_notifier_;
 };
 #endif  // !IS_MOBILE_PLATFORM
 }  // namespace tensorflow

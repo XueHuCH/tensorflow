@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_WHILE_LOOP_EXPENSIVE_INVARIANT_CODE_MOTION_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_WHILE_LOOP_EXPENSIVE_INVARIANT_CODE_MOTION_H_
 
-#include "tensorflow/compiler/xla/service/hlo_module.h"
+#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
 #include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
 #include "tensorflow/compiler/xla/statusor.h"
 
@@ -29,7 +29,7 @@ namespace xla {
 // instructions with a root that returns true with it will be hoisted out.
 class WhileLoopExpensiveInvariantCodeMotion : public HloModulePass {
  public:
-  using ShapeSizeFunction = std::function<int64(const Shape&)>;
+  using ShapeSizeFunction = std::function<int64_t(const Shape&)>;
   explicit WhileLoopExpensiveInvariantCodeMotion(
       std::function<bool(const HloInstruction&)> worth_hoisting_individually,
       ShapeSizeFunction shape_size_function = ShapeUtil::ByteSizeOfElements)
@@ -40,7 +40,10 @@ class WhileLoopExpensiveInvariantCodeMotion : public HloModulePass {
   absl::string_view name() const override {
     return "while-loop-expensive-invariant-code-motion";
   }
-  StatusOr<bool> Run(HloModule* module) override;
+  using HloPassInterface::Run;
+  StatusOr<bool> Run(
+      HloModule* module,
+      const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
  private:
   StatusOr<bool> TryHoistingInvariantInstructionsFromWhileBody(

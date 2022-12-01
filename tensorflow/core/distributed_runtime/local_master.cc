@@ -24,7 +24,8 @@ namespace tensorflow {
 
 namespace {
 Status WaitForNotification(CallOptions* call_options,
-                           const int64 default_timeout_in_ms, Notification* n) {
+                           const int64_t default_timeout_in_ms,
+                           Notification* n) {
   int64_t timeout_in_ms = call_options->GetTimeout();
   if (timeout_in_ms == 0) {
     timeout_in_ms = default_timeout_in_ms;
@@ -42,11 +43,12 @@ Status WaitForNotification(CallOptions* call_options,
   } else {
     n->WaitForNotification();
   }
-  return Status::OK();
+  return OkStatus();
 }
 }  // namespace
 
-LocalMaster::LocalMaster(Master* master_impl, const int64 default_timeout_in_ms)
+LocalMaster::LocalMaster(Master* master_impl,
+                         const int64_t default_timeout_in_ms)
     : master_impl_(master_impl),
       default_timeout_in_ms_(default_timeout_in_ms) {}
 
@@ -206,9 +208,9 @@ mutex* get_local_master_registry_lock() {
 
 struct MasterInfo {
   Master* master;
-  const int64 default_timeout_in_ms;
+  const int64_t default_timeout_in_ms;
 
-  MasterInfo(Master* master, const int64 default_timeout_in_ms)
+  MasterInfo(Master* master, const int64_t default_timeout_in_ms)
       : master(master), default_timeout_in_ms(default_timeout_in_ms) {}
 };
 

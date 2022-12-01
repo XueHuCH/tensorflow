@@ -1,7 +1,7 @@
 # Description:
 # TensorFlow SavedModel.
 
-load("//tensorflow:tensorflow.bzl", "filegroup")
+load("//tensorflow:tensorflow.default.bzl", "filegroup")
 load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
 load(
     "//tensorflow:tensorflow.bzl",
@@ -17,6 +17,7 @@ load(
 )
 
 package(
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = ["//visibility:public"],
     licenses = ["notice"],
 )
@@ -26,6 +27,7 @@ exports_files(["loader.h"])
 cc_library(
     name = "constants",
     hdrs = ["constants.h"],
+    deps = ["@com_google_absl//absl/strings"],
 )
 
 cc_library(
@@ -53,13 +55,15 @@ cc_library(
     deps = [
         ":constants",
         "//tensorflow/core:protos_all_cc",
+        ":metrics",
+        ":util",
     ] + if_not_mobile([
         # TODO(b/111634734): :lib and :protos_all contain dependencies that
         # cannot be built on mobile platforms. Instead, include the appropriate
         # tf_lib depending on the build platform.
         "@com_google_absl//absl/memory:memory",
         "//tensorflow/core:lib",
-        "//tensorflow/core/util/tensor_bundle",
+        "//tensorflow/core/util/tensor_bundle:byteswaptensor",
     ]),
 )
 
@@ -72,6 +76,7 @@ tf_cc_test(
     linkstatic = 1,
     deps = [
         ":constants",
+        ":metrics",
         ":reader",
         ":tag_constants",
         "//tensorflow/core:lib",
@@ -117,17 +122,18 @@ cc_library(
     hdrs = ["loader.h"],
     deps = [
         ":constants",
+        ":fingerprinting",
         ":loader_util",
         ":reader",
     ] + if_not_mobile([
+        ":metrics",
+        ":util",
         "//tensorflow/core:core_cpu",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/util/tensor_bundle:naming",
-        "//tensorflow/cc/experimental/libexport:metrics",
-        "//tensorflow/cc/experimental/libexport:util",
     ]),
     alwayslink = 1,
 )
@@ -138,12 +144,15 @@ cc_library(
     hdrs = ["bundle_v2.h"],
     deps = [
         ":constants",
-        "//tensorflow/cc/experimental/libexport:metrics",
-        "//tensorflow/cc/experimental/libexport:util",
+        ":fingerprinting",
+        ":metrics",
+        ":reader",
+        ":util",
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/platform:strcat",
         "//tensorflow/core/util/tensor_bundle",
+        "//tensorflow/core/util/tensor_bundle:byteswaptensor",
         "@com_google_absl//absl/container:flat_hash_set",
     ],
 )
@@ -168,11 +177,10 @@ tf_cc_test(
     linkstatic = 1,
     deps = [
         ":bundle_v2",
-        "//tensorflow/cc/experimental/libexport:metrics",
+        ":metrics",
         "//tensorflow/core:lib",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
-        "//tensorflow/core:testlib",
         "//tensorflow/core/platform:test",
     ],
 )
@@ -187,10 +195,10 @@ tf_cc_test(
     deps = [
         ":constants",
         ":loader",
+        ":metrics",
         ":reader",
         ":signature_constants",
         ":tag_constants",
-        "//tensorflow/cc/experimental/libexport:metrics",
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core:tensorflow",
@@ -243,7 +251,7 @@ py_binary(
         "//tensorflow/python/module",
         "//tensorflow/python/saved_model",
         "//tensorflow/python/saved_model:save_options",
-        "//tensorflow/python/training/tracking",
+        "//tensorflow/python/trackable:asset",
         "@absl_py//absl:app",
     ],
 )
@@ -263,6 +271,15 @@ filegroup(
         "testdata/VarsAndArithmeticObjectGraph/**",
         "testdata/fuzz_generated/**",
         "testdata/SimpleV1Model/**",
+        "testdata/OptimizerSlotVariableModule/**",
+    ]),
+)
+
+filegroup(
+    name = "saved_model_fingerprinting_test_files",
+    srcs = glob([
+        "testdata/bert2/**",
+        "testdata/bert1/**",
     ]),
 )
 
@@ -296,4 +313,119 @@ exports_files(
         "testdata/VarsAndArithmeticObjectGraph/**",
         "testdata/fuzz_generated/**",
     ]),
+)
+
+# Linked directly into ":tensorflow_framework".
+cc_library(
+    name = "metrics_impl",
+    srcs = [
+        "metrics.cc",
+        "metrics.h",
+    ],
+    visibility = [
+        "//tensorflow:__pkg__",
+        "//tensorflow/python:__pkg__",
+    ],
+    deps = if_not_mobile(["//tensorflow/core:lib"]) + if_android(["//tensorflow/core:portable_tensorflow_lib_lite"]),
+    alwayslink = True,
+)
+
+cc_library(
+    name = "metrics",
+    hdrs = ["metrics.h"],
+    visibility = ["//tensorflow/python/saved_model:__subpackages__"],
+    deps = if_static([
+        ":metrics_impl",
+    ]) + if_not_mobile(["//tensorflow/core:lib"]) + if_android(["//tensorflow/core:portable_tensorflow_lib_lite"]),
+)
+
+tf_cc_test(
+    name = "metrics_test",
+    size = "small",
+    srcs = ["metrics_test.cc"],
+    deps = [
+        ":metrics",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+    ],
+)
+
+cc_library(
+    name = "util",
+    srcs = ["util.cc"],
+    hdrs = ["util.h"],
+    deps = [
+        "//tensorflow/core/protobuf:for_core_protos_cc",
+    ] + if_not_mobile(["//tensorflow/core:lib"]) + if_android(["//tensorflow/core:portable_tensorflow_lib_lite"]),
+)
+
+tf_cc_test(
+    name = "util_test",
+    size = "small",
+    srcs = ["util_test.cc"],
+    deps = [
+        ":util",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core/protobuf:for_core_protos_cc",
+    ],
+)
+
+# Linked directly into ":tensorflow_framework".
+cc_library(
+    name = "fingerprinting_impl",
+    srcs = [
+        "fingerprinting.cc",
+        "fingerprinting.h",
+    ],
+    visibility = [
+        "//tensorflow:__pkg__",
+        "//tensorflow/python:__pkg__",
+    ],
+    deps = [
+        ":constants",
+        "//tensorflow/core/graph/regularization:simple_delete",
+        "//tensorflow/core/graph/regularization:util",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core/platform:types",
+        "//tensorflow/core/util/tensor_bundle:naming",
+        "@com_google_protobuf//:protobuf_headers",
+        "@com_google_absl//absl/container:btree",
+        "@com_google_absl//absl/strings",
+    ] + if_not_mobile(["//tensorflow/core:lib"]) + if_android(["//tensorflow/core:portable_tensorflow_lib_lite"]),
+    alwayslink = True,
+)
+
+cc_library(
+    name = "fingerprinting",
+    hdrs = ["fingerprinting.h"],
+    visibility = ["//tensorflow/python/saved_model:__subpackages__"],
+    deps = if_static([
+        ":fingerprinting_impl",
+        "@com_google_absl//absl/strings",
+        "//tensorflow/core:protos_all_cc",
+    ]) + if_not_mobile(["//tensorflow/core:lib"]) + if_android(["//tensorflow/core:portable_tensorflow_lib_lite"]),
+)
+
+tf_cc_test(
+    name = "fingerprinting_test",
+    size = "small",
+    srcs = ["fingerprinting_test.cc"],
+    data = [
+        ":saved_model_fingerprinting_test_files",
+        ":saved_model_test_files",
+    ],
+    deps = [
+        ":fingerprinting",
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/cc:scope",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core/protobuf:for_core_protos_cc",
+    ],
 )

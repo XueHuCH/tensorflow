@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 #include "tensorflow/core/data/service/worker_client.h"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -28,13 +29,13 @@ limitations under the License.
 #include "absl/memory/memory.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
-#include "tensorflow/core/data/dataset.pb.h"
 #include "tensorflow/core/data/service/credentials_factory.h"
 #include "tensorflow/core/data/service/data_transfer.h"
 #include "tensorflow/core/data/service/grpc_util.h"
 #include "tensorflow/core/data/service/worker.grpc.pb.h"
 #include "tensorflow/core/data/service/worker.pb.h"
 #include "tensorflow/core/data/service/worker_impl.h"
+#include "tensorflow/core/framework/dataset.pb.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/tensor_types.h"
@@ -50,6 +51,16 @@ limitations under the License.
 namespace tensorflow {
 namespace data {
 
+StatusOr<std::unique_ptr<DataServiceWorkerClient>>
+CreateDataServiceWorkerClient(const std::string& address,
+                              const std::string& protocol,
+                              const std::string& transfer_protocol) {
+  auto client = std::make_unique<DataServiceWorkerClient>(address, protocol,
+                                                          transfer_protocol);
+  TF_RETURN_IF_ERROR(client->Initialize());
+  return client;
+}
+
 Status DataServiceWorkerClient::GetElement(const GetElementRequest& req,
                                            GetElementResult& result) {
   TF_RETURN_IF_ERROR(EnsureInitialized());
@@ -59,24 +70,22 @@ Status DataServiceWorkerClient::GetElement(const GetElementRequest& req,
 Status DataServiceWorkerClient::EnsureInitialized() {
   mutex_lock l(mu_);
   if (client_) {
-    return Status::OK();
+    return OkStatus();
   }
   TF_RETURN_IF_ERROR(DataTransferClient::Build(
-      transfer_protocol_, {protocol_, address_}, &client_));
-  return Status::OK();
+      GetDataTransferProtocol(), {protocol_, address_}, &client_));
+  return OkStatus();
+}
+
+std::string DataServiceWorkerClient::GetDataTransferProtocol() const {
+  if (transfer_protocol_ == kGrpcTransferProtocol &&
+      LocalWorkers::Get(address_) != nullptr) {
+    return kLocalTransferProtocol;
+  }
+  return transfer_protocol_;
 }
 
 void DataServiceWorkerClient::TryCancel() { client_->TryCancel(); }
-
-StatusOr<std::unique_ptr<DataServiceWorkerClient>>
-CreateDataServiceWorkerClient(const std::string& address,
-                              const std::string& protocol,
-                              const std::string& transfer_protocol) {
-  auto client = absl::make_unique<DataServiceWorkerClient>(address, protocol,
-                                                           transfer_protocol);
-  TF_RETURN_IF_ERROR(client->Initialize());
-  return client;
-}
 
 class GrpcDataTransferClient : public DataTransferClient {
  public:
@@ -100,12 +109,20 @@ class GrpcDataTransferClient : public DataTransferClient {
       }
     }
     grpc::ClientContext ctx;
+    gtl::Cleanup<std::function<void()>> cleanup;
     {
       mutex_lock l(mu_);
       active_contexts_.insert(&ctx);
+      cleanup = gtl::MakeCleanup([this, &ctx] {
+        mutex_lock l(mu_);
+        active_contexts_.erase(&ctx);
+      });
     }
     GetElementResponse resp;
     grpc::Status s = stub_->GetElement(&ctx, req, &resp);
+    if (!s.ok()) {
+      return grpc_util::WrapError("Failed to get element", s);
+    }
     result.end_of_sequence = resp.end_of_sequence();
     result.skip = resp.skip_task();
     switch (resp.element_case()) {
@@ -126,14 +143,7 @@ class GrpcDataTransferClient : public DataTransferClient {
       case GetElementResponse::ELEMENT_NOT_SET:
         break;
     }
-    {
-      mutex_lock l(mu_);
-      active_contexts_.erase(&ctx);
-    }
-    if (!s.ok()) {
-      return grpc_util::WrapError("Failed to get element", s);
-    }
-    return Status::OK();
+    return OkStatus();
   }
 
   void TryCancel() override {
@@ -168,7 +178,7 @@ class GrpcTransferClientRegistrar {
               config.protocol, &credentials));
           *out = std::make_unique<GrpcDataTransferClient>(credentials,
                                                           config.address);
-          return Status::OK();
+          return OkStatus();
         });
   }
 };
@@ -208,7 +218,7 @@ class LocalDataTransferClient : public DataTransferClient {
       return errors::Cancelled(absl::Substitute(
           "Client for worker $0 has been cancelled.", worker_address_));
     }
-    return Status::OK();
+    return OkStatus();
   }
 
   StatusOr<std::shared_ptr<DataServiceWorkerImpl>> GetWorker(
@@ -217,8 +227,8 @@ class LocalDataTransferClient : public DataTransferClient {
         LocalWorkers::Get(worker_address_);
     if (!worker) {
       return errors::Cancelled(absl::Substitute(
-          "Worker at address $0 is no longer available; cancel request for "
-          "task $1.",
+          "Local worker at address $0 is no longer available; cancel request "
+          "for task $1.",
           worker_address_, req.task_id()));
     }
     return worker;
@@ -236,8 +246,8 @@ class LocalTransferClientRegistrar {
     DataTransferClient::Register(
         kLocalTransferProtocol, [](DataTransferClient::Config config,
                                    std::unique_ptr<DataTransferClient>* out) {
-          *out = absl::make_unique<LocalDataTransferClient>(config.address);
-          return Status::OK();
+          *out = std::make_unique<LocalDataTransferClient>(config.address);
+          return OkStatus();
         });
   }
 };

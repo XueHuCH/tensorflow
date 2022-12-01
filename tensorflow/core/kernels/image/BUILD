@@ -12,18 +12,7 @@ load(
     "//tensorflow/core/platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
 )
-
-# buildifier: disable=same-origin-load
-load("//tensorflow:tensorflow.bzl", "filegroup")
-
-# buildifier: disable=same-origin-load
-load("//tensorflow:tensorflow.bzl", "tf_disable_ptxas_warning_flags")
-
-# buildifier: disable=same-origin-load
-load("//tensorflow:tensorflow.bzl", "tf_cuda_cc_test")
-
-# buildifier: disable=same-origin-load
-load("//tensorflow:tensorflow.bzl", "tf_kernel_library")
+load("//tensorflow:tensorflow.default.bzl", "filegroup", "tf_cuda_cc_test", "tf_disable_ptxas_warning_flags", "tf_kernel_library")
 
 # TODO(rmlarsen): Remove ASAP.
 package_group(
@@ -31,10 +20,12 @@ package_group(
     packages = [
         "//tensorflow/...",
         "//tensorflow_text/...",
+        "//waymo/onboard/ml/...",
     ],
 )
 
 package(
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         ":friends",
         "//tensorflow:__subpackages__",
@@ -165,7 +156,7 @@ IMAGE_TEST_DEPS = [
 tf_kernel_library(
     name = "adjust_contrast_op",
     prefix = "adjust_contrast_op",
-    deps = IMAGE_DEPS,
+    deps = IMAGE_DEPS + ["//tensorflow/core/util:determinism_for_kernels"],
 )
 
 cc_library(
@@ -202,7 +193,10 @@ tf_kernel_library(
 tf_kernel_library(
     name = "crop_and_resize_op",
     prefix = "crop_and_resize_op",
-    deps = IMAGE_DEPS + ["//tensorflow/core:framework_internal"],
+    deps = IMAGE_DEPS + [
+        "//tensorflow/core:framework_internal",
+        "//tensorflow/core/util:determinism_for_kernels",
+    ],
 )
 
 tf_kernel_library(
@@ -296,13 +290,16 @@ tf_kernel_library(
 tf_kernel_library(
     name = "resize_bilinear_op",
     prefix = "resize_bilinear_op",
-    deps = IMAGE_DEPS + ["//tensorflow/core/kernels:cast_op"],
+    deps = IMAGE_DEPS + [
+        "//tensorflow/core/kernels:cast_op",
+        "//tensorflow/core/util:determinism_for_kernels",
+    ],
 )
 
 tf_kernel_library(
     name = "resize_nearest_neighbor_op",
     prefix = "resize_nearest_neighbor_op",
-    deps = IMAGE_DEPS,
+    deps = IMAGE_DEPS + ["//tensorflow/core/util:determinism_for_kernels"],
 )
 
 tf_kernel_library(

@@ -24,14 +24,14 @@ limitations under the License.
 #include "tensorflow/compiler/xla/client/compile_only_client.h"
 #include "tensorflow/compiler/xla/service/computation_placer.h"
 #include "tensorflow/compiler/xla/service/hlo.pb.h"
+#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_ops_c_api.h"
+#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_platform_interface.h"
 #include "tensorflow/compiler/xrt/xrt.pb.h"
 #include "tensorflow/core/platform/macros.h"
 #include "tensorflow/core/tpu/kernels/tpu_compile_op_support.h"
 #include "tensorflow/core/tpu/kernels/tpu_executable_info.pb.h"
 #include "tensorflow/core/tpu/kernels/tpu_mesh_state_interface.h"
 #include "tensorflow/core/tpu/kernels/tpu_program_group_interface.h"
-#include "tensorflow/core/tpu/tpu_ops_c_api.h"
-#include "tensorflow/stream_executor/tpu/tpu_platform_interface.h"
 
 namespace tensorflow {
 namespace tpu {
@@ -48,8 +48,8 @@ class TpuAotCompilationOptions : public xla::AotCompilationOptions {
   };
 
   void set_num_cores(int64_t tpu_cores) { num_cores_ = tpu_cores; }
-  int64 replica_count() const override { return replica_count_; }
-  int64 num_cores() const override { return num_cores_; }
+  int64_t replica_count() const override { return replica_count_; }
+  int64_t num_cores() const override { return num_cores_; }
 
   void set_allow_separate_sharding_programs(bool allow) {
     allow_separate_sharding_programs_ = allow;
@@ -68,8 +68,8 @@ class TpuAotCompilationOptions : public xla::AotCompilationOptions {
   }
 
  private:
-  int64 num_cores_;
-  int64 replica_count_;
+  int64_t num_cores_;
+  int64_t replica_count_;
 
   // Whether to allow the compiler to create separte sharding and unsharding
   // programs, and modify the original program's input/output sharded size. This
@@ -118,15 +118,14 @@ class TpuProgramGroup : public TpuProgramGroupInterface {
 
   void UnloadAndDestroyPrograms() override;
 
-  Status LogCompilationStats(const TpuCompilationCacheKey& key,
-                             absl::Duration duration) override;
-
   const std::vector<bool>& may_modify_variables_list() const override;
   void set_may_modify_variables(const std::vector<bool>& may_modify_variables);
   bool may_modify_variables(int index) const override;
 
   const std::vector<std::string>& fingerprints() const;
   void set_fingerprints();
+
+  const std::string& fingerprint(int index) const override;
 
   const std::vector<XLA_TpuProgram*>& tpu_programs() const;
   std::vector<XLA_TpuProgram*> tpu_programs(TpuProgramShardingType type) const;

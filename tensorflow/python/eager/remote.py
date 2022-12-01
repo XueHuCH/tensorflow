@@ -14,10 +14,6 @@
 # ==============================================================================
 """Helpers to connect to remote servers."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import copy
 
 from absl import logging
@@ -26,6 +22,7 @@ from tensorflow.core.protobuf.tensorflow_server_pb2 import ServerDef
 from tensorflow.python import pywrap_tfe
 from tensorflow.python.distribute import device_util
 from tensorflow.python.distribute.cluster_resolver import cluster_resolver
+from tensorflow.python.distribute.cluster_resolver import tpu_cluster_resolver
 from tensorflow.python.eager import context
 from tensorflow.python.framework import ops
 from tensorflow.python.platform import remote_utils
@@ -160,6 +157,19 @@ def connect_to_cluster(cluster_spec_or_resolver,
       raise ValueError("`cluster_device_filters` must be an instance of "
                        "`tf.train.experimental.ClusterDeviceFilters`.")
 
+  # Check whether the server def has changed. We need to do the check before the
+  # local job is added to the cluster.
+  is_server_def_changed = False
+  current_server_def = context.get_server_def()
+  if current_server_def and job_name not in cluster_spec.jobs:
+    for i, job in enumerate(current_server_def.cluster.job):
+      if job.name == job_name:
+        del current_server_def.cluster.job[i]
+  if (current_server_def is None or current_server_def.cluster != cluster_def or
+      current_server_def.job_name != job_name or
+      current_server_def.task_index != task_index):
+    is_server_def_changed = True
+
   # Automatically add local job, if not part of the cluster spec.
   if job_name not in cluster_spec.jobs:
     local_port = pywrap_tfe.TF_PickUnusedPortOrDie()
@@ -169,6 +179,28 @@ def connect_to_cluster(cluster_spec_or_resolver,
     # to connect with local.
     job_def.tasks[0] = "localhost:{}".format(local_port)
 
+  if context.context().coordination_service is None:
+    service_type = remote_utils.coordination_service_type(protocol)
+    service_leader = ""
+    # Maybe enable coordination service for the communication protocol
+    # TODO(b/243839559): Fix UPTC + Coordination service crashing
+    if isinstance(cluster_spec_or_resolver,
+                  tpu_cluster_resolver.TPUClusterResolver):
+      is_uptc_sess = ".uptc-worker." in cluster_spec_or_resolver.master()
+      service_type = remote_utils.coordination_service_type(
+          protocol, is_uptc_sess)
+      service_leader = cluster_spec_or_resolver.get_coordination_service_leader(
+      )
+    if service_type:
+      # If `enable_health_check` is true, coordination service agent would
+      # do connecting (and tasks would send heartbeat if connection is set up)
+      # while creating eager contexts. Enabling health check does not mutate
+      # coordination service.
+      context.context().configure_coordination_service(
+          service_type=service_type,
+          service_leader=service_leader,
+          enable_health_check=False)
+
   server_def = ServerDef(
       cluster=cluster_def,
       job_name=job_name,
@@ -177,7 +209,7 @@ def connect_to_cluster(cluster_spec_or_resolver,
       default_session_config=context.context().config,
       cluster_device_filters=cluster_device_filters)
 
-  if context.get_server_def() is None:
+  if is_server_def_changed:
     context.set_server_def(server_def)
   else:
     context.update_server_def(server_def)

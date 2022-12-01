@@ -14,10 +14,6 @@
 # ==============================================================================
 """Internal utilities for `LinearOperator` classes."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import numpy as np
 
 from tensorflow.python.framework import dtypes
@@ -111,8 +107,9 @@ def convert_nonref_to_tensor(value, dtype=None, dtype_hint=None, name=None):
     dtype_base = base_dtype(dtype)
     value_dtype_base = base_dtype(value.dtype)
     if dtype_base != value_dtype_base:
-      raise TypeError('Mutable type must be of dtype "{}" but is "{}".'.format(
-          dtype_name(dtype_base), dtype_name(value_dtype_base)))
+      raise TypeError(
+          f"Argument `value` must be of dtype `{dtype_name(dtype_base)}` "
+          f"Received: `{dtype_name(value_dtype_base)}`.")
     return value
   return ops.convert_to_tensor_v2_with_dispatch(
       value, dtype=dtype, dtype_hint=dtype_hint, name=name)
@@ -140,8 +137,8 @@ def check_dtype(arg, dtype):
   """Check that arg.dtype == self.dtype."""
   if arg.dtype.base_dtype != dtype:
     raise TypeError(
-        "Expected argument to have dtype %s.  Found: %s in tensor %s" %
-        (dtype, arg.dtype, arg))
+        f"Expected argument to have dtype {dtype}. Found: {arg.dtype} in "
+        f"tensor {arg}.")
 
 
 def is_ref(x):
@@ -168,7 +165,7 @@ def is_ref(x):
 def assert_not_ref_type(x, arg_name):
   if is_ref(x):
     raise TypeError(
-        "Argument %s cannot be reference type. Found: %s" % (arg_name, type(x)))
+        f"Argument {arg_name} cannot be reference type. Found: {type(x)}.")
 
 
 ################################################################################
@@ -250,8 +247,8 @@ def assert_is_batch_matrix(tensor):
   sh = tensor.shape
   if sh.ndims is not None and sh.ndims < 2:
     raise ValueError(
-        "Expected [batch] matrix to have at least two dimensions.  Found: "
-        "%s" % tensor)
+        f"Expected [batch] matrix to have at least two dimensions. Found: "
+        f"{tensor}.")
 
 
 def shape_tensor(shape, name=None):
@@ -480,6 +477,32 @@ def _reshape_for_efficiency(a,
 ################################################################################
 # Helpers for hints.
 ################################################################################
+
+
+def is_adjoint_pair(x, y):
+  """True iff x and y are adjoints of each other (by id, not entries)."""
+  if x is y:  # Note that if x is y then all of their hints are the same!
+    if x.is_self_adjoint is False:  # pylint:disable=g-bool-id-comparison
+      return False
+    if x.is_self_adjoint:
+      return True
+  # Use the fact that if x = LinearOperatorAdjoint(y), then x.H is y.
+  return x.H is y or y.H is x
+
+
+def is_aat_form(operators):
+  """Returns True if operators is of the form A @ A.H, possibly recursively."""
+  operators = list(operators)
+  if not operators:
+    raise ValueError("AAT form is undefined for empty operators")
+
+  if len(operators) % 2:
+    return False
+
+  # Check for forms like (A1 @ A2) @ (A2.H @ A1.H)
+  return all(
+      is_adjoint_pair(operators[i], operators[-1 - i])
+      for i in range(len(operators) // 2))
 
 
 def use_operator_or_provided_hint_unless_contradicting(

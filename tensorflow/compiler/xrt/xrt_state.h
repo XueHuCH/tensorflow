@@ -30,14 +30,14 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/shaped_buffer.h"
 #include "tensorflow/compiler/xla/shape_util.h"
 #include "tensorflow/compiler/xla/statusor.h"
+#include "tensorflow/compiler/xla/stream_executor/device_memory_allocator.h"
+#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
 #include "tensorflow/compiler/xla/xla_data.pb.h"
 #include "tensorflow/compiler/xrt/xrt_refptr.h"
 #include "tensorflow/core/lib/core/refcount.h"
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/types.h"
-#include "tensorflow/stream_executor/device_memory_allocator.h"
-#include "tensorflow/stream_executor/stream_executor.h"
 
 namespace tensorflow {
 
@@ -180,11 +180,11 @@ class XRTTupleAllocation : public core::RefCounted {
   // Increases the pin-count of this allocation. If the pin-count is greater
   // than 0, the allocation cannot be swapped. Returned the pin-count value
   // before the increase.
-  int64 Pin();
+  int64_t Pin();
 
   // Decreases the pin-count of this allocation. Returned the pin-count value
   // before the decrease.
-  int64 Unpin();
+  int64_t Unpin();
 
   // Checks whether the allocation is currently pinned.
   bool IsPinned() const;
@@ -298,7 +298,7 @@ class XRTTupleAllocation : public core::RefCounted {
   std::unique_ptr<xla::Literal> literal_;
   // A pinned allocation is one which cannot be swapped out. If pin_count_ > 0
   // then the allocation is pinned.
-  std::atomic<int64> pin_count_;
+  std::atomic<int64_t> pin_count_;
 };
 
 }  // namespace tensorflow

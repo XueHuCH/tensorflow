@@ -27,7 +27,7 @@ namespace tensorflow {
   REGISTER_KERNEL_BUILDER(Name("Prod")                                      \
                               .Device(DEVICE_CPU)                           \
                               .TypeConstraint<type>("T")                    \
-                              .TypeConstraint<int64>("Tidx"),               \
+                              .TypeConstraint<int64_t>("Tidx"),             \
                           ReductionOp<CPUDevice, type, int64,               \
                                       Eigen::internal::ProdReducer<type>>);
 TF_CALL_NUMBER_TYPES(REGISTER_CPU_KERNELS);
@@ -46,7 +46,7 @@ TF_CALL_NUMBER_TYPES(REGISTER_CPU_KERNELS);
   REGISTER_KERNEL_BUILDER(Name("Prod")                                      \
                               .Device(DEVICE_GPU)                           \
                               .TypeConstraint<type>("T")                    \
-                              .TypeConstraint<int64>("Tidx")                \
+                              .TypeConstraint<int64_t>("Tidx")              \
                               .HostMemory("reduction_indices"),             \
                           ReductionOp<GPUDevice, type, int64,               \
                                       Eigen::internal::ProdReducer<type>>); \
@@ -60,6 +60,7 @@ TF_CALL_NUMBER_TYPES(REGISTER_CPU_KERNELS);
 
 TF_CALL_int32(REGISTER_GPU_KERNELS);
 TF_CALL_int64(REGISTER_GPU_KERNELS);
+TF_CALL_bfloat16(REGISTER_GPU_KERNELS);
 TF_CALL_GPU_NUMBER_TYPES(REGISTER_GPU_KERNELS);
 #if GOOGLE_CUDA
 TF_CALL_COMPLEX_TYPES(REGISTER_GPU_KERNELS);

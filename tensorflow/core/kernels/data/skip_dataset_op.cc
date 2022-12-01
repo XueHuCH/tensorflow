@@ -37,7 +37,7 @@ constexpr char kInputImplEmpty[] = "input_impl_empty";
 
 class SkipDatasetOp::Dataset : public DatasetBase {
  public:
-  Dataset(OpKernelContext* ctx, int64 count, const DatasetBase* input)
+  Dataset(OpKernelContext* ctx, int64_t count, const DatasetBase* input)
       : DatasetBase(DatasetContext(ctx)), count_(count), input_(input) {
     input_->Ref();
   }
@@ -47,10 +47,10 @@ class SkipDatasetOp::Dataset : public DatasetBase {
   std::unique_ptr<IteratorBase> MakeIteratorInternal(
       const string& prefix) const override {
     if (count_ < 0) {
-      return absl::make_unique<EmptyIterator>(EmptyIterator::Params{
+      return std::make_unique<EmptyIterator>(EmptyIterator::Params{
           this, name_utils::IteratorPrefix(kEmptySkip, prefix)});
     } else {
-      return absl::make_unique<FiniteIterator>(FiniteIterator::Params{
+      return std::make_unique<FiniteIterator>(FiniteIterator::Params{
           this, name_utils::IteratorPrefix(kFiniteSkip, prefix)});
     }
   }
@@ -67,21 +67,35 @@ class SkipDatasetOp::Dataset : public DatasetBase {
     return name_utils::DatasetDebugString(kDatasetType);
   }
 
-  int64 Cardinality() const override {
-    int64 n = input_->Cardinality();
+  int64_t CardinalityInternal() const override {
+    int64_t n = input_->Cardinality();
     if (n == kInfiniteCardinality || n == kUnknownCardinality) {
       return n;
     }
-    return count_ < 0 ? 0 : std::max(int64{0}, n - count_);
+    return count_ < 0 ? 0 : std::max(int64_t{0}, n - count_);
+  }
+
+  int64_t CardinalityInternal(CardinalityOptions options) const override {
+    int64_t n = input_->Cardinality(options);
+    if (n == kInfiniteCardinality || n == kUnknownCardinality) {
+      return n;
+    }
+    return count_ < 0 ? 0 : std::max(int64_t{0}, n - count_);
   }
 
   Status InputDatasets(std::vector<const DatasetBase*>* inputs) const override {
     inputs->push_back(input_);
-    return Status::OK();
+    return OkStatus();
   }
 
   Status CheckExternalState() const override {
     return input_->CheckExternalState();
+  }
+
+  Status Get(OpKernelContext* ctx, int64 index,
+             std::vector<Tensor>* out_tensors) const override {
+    TF_RETURN_IF_ERROR(CheckRandomAccessCompatible(index));
+    return input_->Get(ctx, index + count_, out_tensors);
   }
 
  protected:
@@ -93,7 +107,7 @@ class SkipDatasetOp::Dataset : public DatasetBase {
     Node* count = nullptr;
     TF_RETURN_IF_ERROR(b->AddScalar(count_, &count));
     TF_RETURN_IF_ERROR(b->AddDataset(this, {input_graph_node, count}, output));
-    return Status::OK();
+    return OkStatus();
   }
 
  private:
@@ -101,11 +115,14 @@ class SkipDatasetOp::Dataset : public DatasetBase {
    public:
     explicit EmptyIterator(const Params& params)
         : DatasetIterator<Dataset>(params) {}
+
+    bool SymbolicCheckpointCompatible() const override { return true; }
+
     Status GetNextInternal(IteratorContext* ctx,
                            std::vector<Tensor>* out_tensors,
                            bool* end_of_sequence) override {
       *end_of_sequence = true;
-      return Status::OK();
+      return OkStatus();
     }
 
    protected:
@@ -117,12 +134,12 @@ class SkipDatasetOp::Dataset : public DatasetBase {
 
     Status SaveInternal(SerializationContext* ctx,
                         IteratorStateWriter* writer) override {
-      return Status::OK();
+      return OkStatus();
     }
 
     Status RestoreInternal(IteratorContext* ctx,
                            IteratorStateReader* reader) override {
-      return Status::OK();
+      return OkStatus();
     }
   };
 
@@ -130,6 +147,8 @@ class SkipDatasetOp::Dataset : public DatasetBase {
    public:
     explicit FiniteIterator(const Params& params)
         : DatasetIterator<Dataset>(params), i_(0) {}
+
+    bool SymbolicCheckpointCompatible() const override { return true; }
 
     Status Initialize(IteratorContext* ctx) override {
       return dataset()->input_->MakeIterator(ctx, this, prefix(), &input_impl_);
@@ -142,7 +161,7 @@ class SkipDatasetOp::Dataset : public DatasetBase {
 
       if (!input_impl_) {
         *end_of_sequence = true;
-        return Status::OK();
+        return OkStatus();
       }
 
       if (i_ < dataset()->count_) {
@@ -153,7 +172,7 @@ class SkipDatasetOp::Dataset : public DatasetBase {
         if (*end_of_sequence) {
           // We reached the end before the count was reached.
           input_impl_.reset();
-          return Status::OK();
+          return OkStatus();
         }
       }
 
@@ -163,7 +182,7 @@ class SkipDatasetOp::Dataset : public DatasetBase {
       if (*end_of_sequence) {
         input_impl_.reset();
       }
-      return Status::OK();
+      return OkStatus();
     }
 
    protected:
@@ -177,33 +196,36 @@ class SkipDatasetOp::Dataset : public DatasetBase {
                         IteratorStateWriter* writer) override {
       mutex_lock l(mu_);
       TF_RETURN_IF_ERROR(writer->WriteScalar(full_name(kCurIndex), i_));
+      TF_RETURN_IF_ERROR(writer->WriteScalar(
+          full_name(kInputImplEmpty), static_cast<int64_t>(!input_impl_)));
       if (input_impl_) {
         TF_RETURN_IF_ERROR(SaveInput(ctx, writer, input_impl_));
-      } else {
-        TF_RETURN_IF_ERROR(writer->WriteScalar(full_name(kInputImplEmpty), ""));
       }
-      return Status::OK();
+      return OkStatus();
     }
 
     Status RestoreInternal(IteratorContext* ctx,
                            IteratorStateReader* reader) override {
       mutex_lock l(mu_);
       TF_RETURN_IF_ERROR(reader->ReadScalar(full_name(kCurIndex), &i_));
-      if (!reader->Contains(full_name(kInputImplEmpty))) {
+      int64_t input_empty;
+      TF_RETURN_IF_ERROR(
+          reader->ReadScalar(full_name(kInputImplEmpty), &input_empty));
+      if (!static_cast<bool>(input_empty)) {
         TF_RETURN_IF_ERROR(RestoreInput(ctx, reader, input_impl_));
       } else {
         input_impl_.reset();
       }
-      return Status::OK();
+      return OkStatus();
     }
 
    private:
     mutex mu_;
-    int64 i_ TF_GUARDED_BY(mu_);
+    int64_t i_ TF_GUARDED_BY(mu_);
     std::unique_ptr<IteratorBase> input_impl_ TF_GUARDED_BY(mu_);
   };
 
-  const int64 count_;
+  const int64_t count_;
   const DatasetBase* const input_;
 };
 
@@ -213,8 +235,8 @@ SkipDatasetOp::SkipDatasetOp(OpKernelConstruction* ctx)
 void SkipDatasetOp::MakeDataset(OpKernelContext* ctx, DatasetBase* input,
                                 DatasetBase** output) {
   // Create a new SkipDatasetOp::Dataset, and return it as the output.
-  int64 count;
-  OP_REQUIRES_OK(ctx, ParseScalarArgument<int64>(ctx, kCount, &count));
+  int64_t count;
+  OP_REQUIRES_OK(ctx, ParseScalarArgument<int64_t>(ctx, kCount, &count));
 
   *output = new Dataset(ctx, count, input);
 }

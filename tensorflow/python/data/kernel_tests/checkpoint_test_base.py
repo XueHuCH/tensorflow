@@ -14,16 +14,14 @@
 # ==============================================================================
 """Base test class for checkpointing datasets."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import os
 
 import numpy as np
-
+from tensorflow.python.checkpoint import checkpoint as tracking_util
+from tensorflow.python.checkpoint import checkpoint_management
 from tensorflow.python.data.experimental.ops import iterator_ops as contrib_iterator_ops
 from tensorflow.python.data.ops import dataset_ops
+from tensorflow.python.data.ops import options as options_lib
 from tensorflow.python.eager import context
 from tensorflow.python.framework import combinations
 from tensorflow.python.framework import dtypes
@@ -35,9 +33,7 @@ from tensorflow.python.ops import variables
 from tensorflow.python.ops.ragged import ragged_tensor_value
 from tensorflow.python.platform import gfile
 from tensorflow.python.platform import test
-from tensorflow.python.training import checkpoint_management
 from tensorflow.python.training import saver as saver_lib
-from tensorflow.python.training.tracking import util as tracking_util
 from tensorflow.python.util import nest
 
 
@@ -58,7 +54,7 @@ def default_test_combinations():
   """Returns the default test combinations for testing checkpointing."""
 
   def disable_optimizations(ds_fn):
-    options = dataset_ops.Options()
+    options = options_lib.Options()
     options.experimental_optimization.apply_default_optimizations = False
 
     def ds_fn_no_opt():
@@ -485,7 +481,7 @@ class CheckpointTestBase(test.TestCase):
       actual = actual.tolist()
     self.assertEqual(type(expected), type(actual))
 
-    if nest.is_sequence(expected):
+    if nest.is_nested(expected):
       self.assertEqual(len(expected), len(actual))
       if isinstance(expected, dict):
         for key1, key2 in zip(sorted(expected), sorted(actual)):
@@ -508,8 +504,8 @@ class CheckpointTestBase(test.TestCase):
       self.match(expected, actual)
 
   def gen_break_points(self, num_outputs, num_samples=10):
-    """Generates `num_samples` breaks points in [0, num_outputs]."""
-    return np.linspace(0, num_outputs, num_samples, dtype=int)
+    """Generates `num_samples` unique break points in [0, num_outputs]."""
+    return np.unique(np.linspace(0, num_outputs, num_samples, dtype=int))
 
   def _build_graph(self, ds_fn, sparse_tensors=False):
     dataset = ds_fn()

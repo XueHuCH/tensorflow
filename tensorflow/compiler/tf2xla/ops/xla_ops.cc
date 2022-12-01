@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cstddef>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/strings/match.h"
@@ -41,7 +42,7 @@ Status UnchangedRank(shape_inference::InferenceContext* c) {
   } else {
     c->set_output(0, c->input(0));
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 REGISTER_OP("XlaBroadcastHelper")
@@ -180,6 +181,7 @@ REGISTER_OP("XlaConvV2")
     .Attr("dimension_numbers: string")
     .Attr("precision_config: string")
     .Attr("preferred_element_type: numbertype")
+    .Attr("batch_group_count: int = 1")
     .Output("output: preferred_element_type")
     .SetShapeFn(UnchangedRank)
     .Doc(R"doc(
@@ -187,16 +189,17 @@ Wraps the XLA ConvGeneralDilated operator, documented at
  https://www.tensorflow.org/performance/xla/operation_semantics#conv_convolution
 .
 
-lhs: the input tensor
-rhs: the kernel tensor
-window_strides: the inter-window strides
-padding: the padding to apply at the start and end of each input dimensions
+lhs: input tensor
+rhs: kernel tensor
+window_strides: inter-window strides
+padding: padding to apply at the start and end of each input dimensions
 lhs_dilation: dilation to apply between input elements
 rhs_dilation: dilation to apply between kernel elements
 feature_group_count: number of feature groups for grouped convolution.
-dimension_numbers: a serialized xla::ConvolutionDimensionNumbers proto.
-precision_config: a serialized xla::PrecisionConfig proto.
-preferred_element_type: The type of the tensor.
+dimension_numbers: serialized xla::ConvolutionDimensionNumbers proto.
+precision_config: serialized xla::PrecisionConfig proto.
+preferred_element_type: type of the tensor.
+batch_group_count: number of batch groups or grouped filters.
 )doc");
 
 static Status XlaDotShapeFunction(shape_inference::InferenceContext* c) {
@@ -223,11 +226,11 @@ static Status XlaDotShapeFunction(shape_inference::InferenceContext* c) {
         dimension_numbers.rhs_contracting_dimensions_size());
 
   // Check that contracting dimension sizes match.
-  for (int64 i = 0; i < dimension_numbers.lhs_contracting_dimensions_size();
+  for (int64_t i = 0; i < dimension_numbers.lhs_contracting_dimensions_size();
        ++i) {
-    const int64 lhs_contracting_dimension =
+    const int64_t lhs_contracting_dimension =
         dimension_numbers.lhs_contracting_dimensions(i);
-    const int64 rhs_contracting_dimension =
+    const int64_t rhs_contracting_dimension =
         dimension_numbers.rhs_contracting_dimensions(i);
     shape_inference::DimensionHandle unused;
     TF_RETURN_WITH_CONTEXT_IF_ERROR(
@@ -256,9 +259,11 @@ static Status XlaDotShapeFunction(shape_inference::InferenceContext* c) {
   std::vector<shape_inference::DimensionHandle> output_dims;
 
   // Check that batch dimension sizes match, and add them to output_dims.
-  for (int64 i = 0; i < dimension_numbers.lhs_batch_dimensions_size(); ++i) {
-    const int64 lhs_batch_dimension = dimension_numbers.lhs_batch_dimensions(i);
-    const int64 rhs_batch_dimension = dimension_numbers.rhs_batch_dimensions(i);
+  for (int64_t i = 0; i < dimension_numbers.lhs_batch_dimensions_size(); ++i) {
+    const int64_t lhs_batch_dimension =
+        dimension_numbers.lhs_batch_dimensions(i);
+    const int64_t rhs_batch_dimension =
+        dimension_numbers.rhs_batch_dimensions(i);
     shape_inference::DimensionHandle out;
     TF_RETURN_WITH_CONTEXT_IF_ERROR(
         c->Merge(c->DimKnownRank(lhs_shape_handle, lhs_batch_dimension),
@@ -268,8 +273,8 @@ static Status XlaDotShapeFunction(shape_inference::InferenceContext* c) {
     output_dims.emplace_back(out);
   }
 
-  const int32 lhs_rank = c->Rank(lhs_shape_handle);
-  for (int64 i = 0; i < lhs_rank; ++i) {
+  const int32_t lhs_rank = c->Rank(lhs_shape_handle);
+  for (int64_t i = 0; i < lhs_rank; ++i) {
     if (absl::c_linear_search(dimension_numbers.lhs_contracting_dimensions(),
                               i) ||
         absl::c_linear_search(dimension_numbers.lhs_batch_dimensions(), i)) {
@@ -278,8 +283,8 @@ static Status XlaDotShapeFunction(shape_inference::InferenceContext* c) {
     output_dims.emplace_back(c->Dim(lhs_shape_handle, i));
   }
 
-  const int32 rhs_rank = c->Rank(rhs_shape_handle);
-  for (int64 i = 0; i < rhs_rank; ++i) {
+  const int32_t rhs_rank = c->Rank(rhs_shape_handle);
+  for (int64_t i = 0; i < rhs_rank; ++i) {
     if (absl::c_linear_search(dimension_numbers.rhs_contracting_dimensions(),
                               i) ||
         absl::c_linear_search(dimension_numbers.rhs_batch_dimensions(), i)) {
@@ -289,7 +294,7 @@ static Status XlaDotShapeFunction(shape_inference::InferenceContext* c) {
   }
 
   c->set_output(0, c->MakeShape(output_dims));
-  return Status::OK();
+  return OkStatus();
 }
 
 REGISTER_OP("XlaDot")
@@ -393,7 +398,7 @@ REGISTER_OP("XlaDynamicSlice")
         return UnchangedRank(c);
       }
       c->set_output(0, size_indices_value);
-      return Status::OK();
+      return OkStatus();
     })
     .Doc(R"doc(
 Wraps the XLA DynamicSlice operator, documented at
@@ -485,7 +490,7 @@ REGISTER_OP("XlaPad")
       if (!c->RankKnown(input_shape_handle)) {
         return UnchangedRank(c);
       }
-      const int32 op_rank = c->Rank(input_shape_handle);
+      const int32_t op_rank = c->Rank(input_shape_handle);
 
       shape_inference::ShapeHandle padding_shape_handle = c->input(1);
       if (c->RankKnown(padding_shape_handle) &&
@@ -519,8 +524,8 @@ REGISTER_OP("XlaPad")
       }
       std::vector<shape_inference::DimensionHandle> output_dims;
       output_dims.reserve(op_rank);
-      for (int64 i = 0; i < op_rank; ++i) {
-        int64 low, high, interior;
+      for (int64_t i = 0; i < op_rank; ++i) {
+        int64_t low, high, interior;
         TF_RETURN_IF_ERROR(c->GetScalarFromTensor(padding_low_tensor, i, &low));
         TF_RETURN_IF_ERROR(
             c->GetScalarFromTensor(padding_high_tensor, i, &high));
@@ -536,7 +541,7 @@ REGISTER_OP("XlaPad")
             c->Dim(input_shape_handle, i);
         if (c->ValueKnown(orig_size_handle)) {
           auto orig_dim = c->Value(orig_size_handle);
-          int64 new_dim = orig_dim + low + high;
+          int64_t new_dim = orig_dim + low + high;
           if (orig_dim > 0) {
             new_dim += interior * (orig_dim - 1);
           }
@@ -551,7 +556,7 @@ REGISTER_OP("XlaPad")
       }
 
       c->set_output(0, c->MakeShape(output_dims));
-      return Status::OK();
+      return OkStatus();
     })
     .Doc(R"doc(
 Wraps the XLA Pad operator, documented at
@@ -582,7 +587,7 @@ REGISTER_OP("XlaRecv")
       shape_inference::ShapeHandle s;
       TF_RETURN_IF_ERROR(c->MakeShapeFromTensorShape(shape_attr, &s));
       c->set_output(0, s);
-      return Status::OK();
+      return OkStatus();
     })
     .Doc(R"doc(
 Receives the named tensor from another XLA computation. Wraps the XLA Recv
@@ -605,12 +610,12 @@ REGISTER_OP("XlaReduce")
     .SetShapeFn([](shape_inference::InferenceContext* c) {
       if (c->RankKnown(c->input(0))) {
         int rank = c->Rank(c->input(0));
-        std::vector<int64> dimensions_to_reduce;
+        std::vector<int64_t> dimensions_to_reduce;
         TF_RETURN_IF_ERROR(
             c->GetAttr("dimensions_to_reduce", &dimensions_to_reduce));
-        std::set<int64> dims_set(dimensions_to_reduce.begin(),
-                                 dimensions_to_reduce.end());
-        auto dim_in_range = [rank](int64 dim) {
+        std::set<int64_t> dims_set(dimensions_to_reduce.begin(),
+                                   dimensions_to_reduce.end());
+        auto dim_in_range = [rank](int64_t dim) {
           return dim >= 0 && dim < rank;
         };
         const int dimensions_to_reduce_size = dimensions_to_reduce.size();
@@ -625,7 +630,7 @@ REGISTER_OP("XlaReduce")
       } else {
         c->set_output(0, c->input(0));
       }
-      return Status::OK();
+      return OkStatus();
     })
     .Doc(R"doc(
 Wraps the XLA Reduce operator, documented at
@@ -655,12 +660,12 @@ REGISTER_OP("XlaVariadicReduce")
       }
       if (c->RankKnown(c->input(0))) {
         int rank = c->Rank(c->input(0));
-        std::vector<int64> dimensions_to_reduce;
+        std::vector<int64_t> dimensions_to_reduce;
         TF_RETURN_IF_ERROR(
             c->GetAttr("dimensions_to_reduce", &dimensions_to_reduce));
-        std::set<int64> dims_set(dimensions_to_reduce.begin(),
-                                 dimensions_to_reduce.end());
-        auto dim_in_range = [rank](int64 dim) {
+        std::set<int64_t> dims_set(dimensions_to_reduce.begin(),
+                                   dimensions_to_reduce.end());
+        auto dim_in_range = [rank](int64_t dim) {
           return dim >= 0 && dim < rank;
         };
         const int dimensions_to_reduce_size = dimensions_to_reduce.size();
@@ -679,7 +684,7 @@ REGISTER_OP("XlaVariadicReduce")
           c->set_output(i, c->input(i));
         }
       }
-      return Status::OK();
+      return OkStatus();
     })
     .Doc(R"doc(
 Wraps the variadic XLA Reduce operator.
@@ -735,13 +740,13 @@ REGISTER_OP("XlaVariadicReduceV2")
       if (c->RankKnown(input_shape)) {
         int rank = c->Rank(input_shape);
 
-        std::vector<int64> dimensions_to_reduce;
+        std::vector<int64_t> dimensions_to_reduce;
         TF_RETURN_IF_ERROR(
             c->GetAttr("dimensions_to_reduce", &dimensions_to_reduce));
-        std::set<int64> dims_set(dimensions_to_reduce.begin(),
-                                 dimensions_to_reduce.end());
+        std::set<int64_t> dims_set(dimensions_to_reduce.begin(),
+                                   dimensions_to_reduce.end());
 
-        auto dim_in_range = [rank](int64 dim) {
+        auto dim_in_range = [rank](int64_t dim) {
           return dim >= 0 && dim < rank;
         };
         const int dimensions_to_reduce_size = dimensions_to_reduce.size();
@@ -753,7 +758,7 @@ REGISTER_OP("XlaVariadicReduceV2")
         }
 
         std::vector<shape_inference::DimensionHandle> output_dims;
-        for (int64 i = 0; i < rank; ++i) {
+        for (int64_t i = 0; i < rank; ++i) {
           if (dims_set.find(i) == dims_set.end()) {
             output_dims.emplace_back(c->Dim(input_shape, i));
           }
@@ -763,7 +768,7 @@ REGISTER_OP("XlaVariadicReduceV2")
       for (int i = 0; i < nr_inputs; ++i) {
         c->set_output(i, output_shape);
       }
-      return Status::OK();
+      return OkStatus();
     })
     .Doc(R"doc(
 Wraps the variadic XLA Reduce operator.
@@ -803,6 +808,39 @@ computation: a reducer function to apply
 window_dimensions: the shape of the window
 window_strides: the inter-window strides
 padding: the padding to apply at the start and end of each input dimensions
+)doc");
+
+REGISTER_OP("XlaRngBitGenerator")
+    .Input("algorithm: int32")
+    .Input("initial_state: uint64")
+    .Input("shape: Tshape")
+    .Output("output_key: uint64")
+    .Output("output: dtype")
+    .Attr("dtype: {int32, int64, uint32, uint64} = DT_UINT64")
+    .Attr("Tshape: {int32, int64} = DT_INT32")
+    .SetShapeFn([](shape_inference::InferenceContext* c) {
+      shape_inference::ShapeHandle algorithm;
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 0, &algorithm));
+      shape_inference::ShapeHandle initial_state;
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 1, &initial_state));
+
+      c->set_output(0, initial_state);
+      shape_inference::ShapeHandle output;
+      TF_RETURN_IF_ERROR(c->MakeShapeFromShapeTensor(2, &output));
+      c->set_output(1, output);
+      return OkStatus();
+    })
+    .Doc(R"doc(
+Stateless PRNG bit generator.
+Wraps the XLA RngBitGenerator operator, documented at
+ https://www.tensorflow.org/performance/xla/operation_semantics#rngbitgenerator.
+
+algorithm: The PRNG algorithm to use, one of
+  tf.random.Algorithm.{PHILOX, THREEFRY, AUTO_SELECT}.
+initial_state: Initial state for the PRNG algorithm. For THREEFRY, it should be
+  a u64[2] and for PHILOX a u64[3].
+shape: The output shape of the generated data.
+dtype: The type of the tensor.
 )doc");
 
 REGISTER_OP("XlaSelectAndScatter")
@@ -874,7 +912,7 @@ REGISTER_OP("XlaKeyValueSort")
     .SetShapeFn([](shape_inference::InferenceContext* c) {
       c->set_output(0, c->input(0));
       c->set_output(1, c->input(1));
-      return Status::OK();
+      return OkStatus();
     })
     .Doc(R"doc(
 Wraps the XLA Sort operator, documented at
@@ -900,7 +938,7 @@ REGISTER_OP("XlaVariadicSort")
       std::vector<shape_inference::ShapeHandle> input_shapes;
       TF_RETURN_IF_ERROR(c->input("inputs", &input_shapes));
       TF_RETURN_IF_ERROR(c->set_output("outputs", input_shapes));
-      return Status::OK();
+      return OkStatus();
     })
     .Doc(R"doc(
 Wraps the XLA Sort operator, documented at
@@ -959,7 +997,7 @@ Takes the packed uint32 input and unpacks the input to uint8 to do
 Dequantization on device.
 
 input: Input tensors whose types is uint32, shape is [d0, ..., dn].
-output: Output tensors whose types is bloat16. If transpose_output is true,
+output: Output tensors whose types is bfloat16. If transpose_output is true,
      output shape is [dn * 4, dn-1, ..., d1, d0]. If transpose_output
      is false, output shape is [d0,..., dn * 4].
 min_range: The minimum scalar value possibly produced for the input.
@@ -999,6 +1037,8 @@ REGISTER_OP("XlaSpmdFullToShardShape")
     .Output("output: T")
     .Attr("T: type")
     .Attr("manual_sharding: string")
+    .Attr("dim: int = -1")
+    .Attr("unspecified_dims: list(int) = []")
     .SetShapeFn([](shape_inference::InferenceContext* c) {
       auto input_handle = c->input(0);
       if (!c->RankKnown(input_handle)) {
@@ -1006,23 +1046,27 @@ REGISTER_OP("XlaSpmdFullToShardShape")
       }
       string sharding_attr;
       TF_RETURN_IF_ERROR(c->GetAttr("manual_sharding", &sharding_attr));
+      int32 single_dim;
+      TF_RETURN_IF_ERROR(c->GetAttr("dim", &single_dim));
       xla::OpSharding sharding;
       sharding.ParseFromString(sharding_attr);
       if (sharding.type() != xla::OpSharding::OTHER) {
         return shape_inference::UnchangedShape(c);
       }
       std::vector<shape_inference::DimensionHandle> dims;
-      for (int64 i = 0; i < c->Rank(input_handle); ++i) {
+      for (int64_t i = 0; i < c->Rank(input_handle); ++i) {
         auto dim = c->Value(c->Dim(input_handle, i));
-        int64 partitions_i = sharding.tile_assignment_dimensions(i);
-        if (dim != shape_inference::InferenceContext::kUnknownDim &&
-            partitions_i != 1) {
-          dim = (dim + partitions_i - 1) / partitions_i;
+        if (single_dim < 0 || single_dim == i) {
+          int64_t partitions_i = sharding.tile_assignment_dimensions(i);
+          if (dim != shape_inference::InferenceContext::kUnknownDim &&
+              partitions_i != 1) {
+            dim = (dim + partitions_i - 1) / partitions_i;
+          }
         }
         dims.push_back(c->MakeDim(dim));
       }
       c->set_output(0, c->MakeShape(dims));
-      return Status::OK();
+      return OkStatus();
     })
     .Doc(R"doc(
 An op used by XLA SPMD partitioner to switch from automatic partitioning to
@@ -1030,6 +1074,8 @@ manual partitioning. It annotates the input (full-shape, to be automatically
 partitioned) with the same sharding used by manual partitioning, and outputs a
 shard-shaped tensor to be consumed by later manually-partitioned ops. If the
 shape is not evenly partitionable, the padding region will be masked with 0s.
+The conversion can happen partially in subgroups, by specifying the dim
+attribute, where only that dim will be converted.
 )doc");
 
 REGISTER_OP("XlaSpmdShardToFullShape")
@@ -1038,19 +1084,22 @@ REGISTER_OP("XlaSpmdShardToFullShape")
     .Attr("T: type")
     .Attr("manual_sharding: string")
     .Attr("full_shape: shape")
+    .Attr("dim: int = -1")
+    .Attr("unspecified_dims: list(int) = []")
     .SetShapeFn([](shape_inference::InferenceContext* c) {
       TensorShape shape_attr;
       TF_RETURN_IF_ERROR(c->GetAttr("full_shape", &shape_attr));
       shape_inference::ShapeHandle s;
       TF_RETURN_IF_ERROR(c->MakeShapeFromTensorShape(shape_attr, &s));
       c->set_output(0, s);
-      return Status::OK();
+      return OkStatus();
     })
     .Doc(R"doc(
 An op used by XLA SPMD partitioner to switch from manual partitioning to
 automatic partitioning. It converts the shard-shaped, manually partitioned input
 into full-shaped tensor to be partitioned automatically with the same sharding
-used by manual partitioning.
+used by manual partitioning. The conversion can happen partially in subgroups,
+by specifying the dim attribute, where only that dim will be converted.
 )doc");
 
 REGISTER_OP("XlaSharding")
@@ -1058,16 +1107,19 @@ REGISTER_OP("XlaSharding")
     .Output("output: T")
     .Attr("T: type")
     .Attr("sharding: string = ''")
+    .Attr("unspecified_dims: list(int) = []")
     .SetShapeFn(shape_inference::UnchangedShape)
     .Doc(R"doc(
-An op which shards the input based on the given sharding attribute.
+An op which shards the input based on the given sharding attribute. It can
+selectively annotate a subset of tensor dimensions by skipping unspecified_dims,
+and the sharding annotation should be replicated in those dims.
 )doc");
 
 REGISTER_OP("XlaReplicaId")
     .Output("id: int32")
     .SetShapeFn([](shape_inference::InferenceContext* context) {
       context->set_output(0, context->MakeShape({}));
-      return Status::OK();
+      return OkStatus();
     })
     .Doc("Replica ID.");
 
@@ -1114,6 +1166,219 @@ update_computation: Computation to be used for combining the existing values in
   the input array and the updates during scatter.
 dimension_numbers: A serialized xla::ScatterDimensionNumbers proto.
 indices_are_sorted: Boolean indicating if the indices are sorted.
+)doc");
+
+REGISTER_OP("XlaAllReduce")
+    .Input("input: T")
+    .Input("group_assignment: int32")
+    .Output("output: T")
+    .Attr("T: {half, bfloat16, float, int32, uint32}")
+    .Attr("reduce_op: {'Min', 'Max', 'Mul', 'Add', 'Mean'}")
+    .Attr("mode: {'CrossReplica', 'CrossReplicaAndPartition'}")
+    .SetShapeFn(shape_inference::UnchangedShape)
+    .Doc(R"doc(
+Wraps the XLA AllReduce operator
+  documented at https://www.tensorflow.org/xla/operation_semantics#allreduce.
+
+input: Array or a non-empty tuple of arrays to reduce across replicas.
+group_assignment: Groups between which the reductions are performed.
+reduce_op: Reduction computation.
+mode: group mode.
+  CrossReplica: group_assignment contains replica_id. Each group contains the
+    replicas for the current partition.
+  CrossReplicaAndPartition: group_assignment contains replica_id. Each group
+    contains the replicas for all partitions.
+)doc");
+
+REGISTER_OP("XlaReduceScatter")
+    .Input("input: T")
+    .Input("group_assignment: int32")
+    .Input("scatter_dimension: int32")
+    .Output("output: T")
+    .Attr("T: {half, bfloat16, float, int32, uint32}")
+    .Attr("reduce_op: {'Min', 'Max', 'Mul', 'Add', 'Mean'}")
+    .SetShapeFn(shape_inference::ReduceScatterShape)
+    .Doc(R"doc(
+Wraps the XLA ReduceScatter operator
+  documented at https://www.tensorflow.org/xla/operation_semantics#reducescatter.
+
+input: Array or a non-empty tuple of arrays to reduce across replicas.
+group_assignment: Groups between which the reductions are performed.
+scatter_dimension: Dimension to scatter.
+reduce_op: Reduction computation.
+)doc");
+
+Status OptimizationBarrierShape(shape_inference::InferenceContext* c) {
+  for (int i = 0; i < c->num_inputs(); ++i) {
+    c->set_output(i, c->input(i));
+  }
+  return OkStatus();
+}
+
+REGISTER_OP("XlaOptimizationBarrier")
+    .Input("input: T")
+    .Output("output: T")
+    .Attr("T: list(type) >= 0")
+    .SetShapeFn(OptimizationBarrierShape)
+    .Doc(R"doc(
+Wraps the XLA OptimizationBarrier operator.
+
+Documented at https://www.tensorflow.org/xla/operation_semantics#optimizationbarrier.
+
+input: A Tuple of Arrays of any type.
+)doc");
+
+REGISTER_OP("XlaReducePrecision")
+    .Input("operand: T")
+    .Output("output: T")
+    .Attr("T: {bfloat16, half, float, double}")
+    .Attr("exponent_bits: int")
+    .Attr("mantissa_bits: int")
+    .SetShapeFn(shape_inference::UnchangedShape)
+    .Doc(R"doc(
+Wraps the XLA ReducePrecision operator
+  documented at https://www.tensorflow.org/xla/operation_semantics#reduceprecision.
+
+operand: array of floating-point type.
+exponent_bits: number of exponent bits in lower-precision format
+mantissa_bits: number of mantissa bits in lower-precision format
+)doc");
+
+REGISTER_OP("XlaCustomCall")
+    .Input("args: T")
+    .Output("output: dtype")
+    .Attr("target_name: string")
+    .Attr("backend_config: string")
+    .Attr("T: list(type) >= 0")
+    .Attr("dtype: type")
+    .Attr("shape: shape")
+    .SetShapeFn([](shape_inference::InferenceContext* c) {
+      TensorShape shape_attr;
+      TF_RETURN_IF_ERROR(c->GetAttr("shape", &shape_attr));
+      shape_inference::ShapeHandle s;
+      TF_RETURN_IF_ERROR(c->MakeShapeFromTensorShape(shape_attr, &s));
+      c->set_output(0, s);
+      return OkStatus();
+    })
+    .Doc(R"doc(
+Wraps the XLA CustomCall operator
+  documented at https://www.tensorflow.org/xla/operation_semantics#customcall.
+
+args: A list of `Tensor` with possibly different types.
+target_name: Name of the function. A call instruction will be emitted which
+  targets this symbol name.
+backend_config: String, used to encode serialized metadata to the backend.
+dtype: Output tensor data type.
+shape: Output tensor shape.
+)doc");
+
+REGISTER_OP("XlaCustomCallV2")
+    .Input("operands: operand_dtypes")
+    .Output("results: result_dtypes")
+    .Attr("call_target_name: string")
+    .Attr("backend_config: string")
+    .Attr("has_side_effect: bool")
+    .Attr("operand_dtypes: list(type) >= 0")
+    .Attr("result_dtypes: list(type) >= 0")
+    .Attr("result_shapes: list(shape) >= 0")
+    .SetShapeFn([](shape_inference::InferenceContext* c) {
+      std::vector<TensorShape> shapes;
+      TF_RETURN_IF_ERROR(c->GetAttr("result_shapes", &shapes));
+      if (shapes.size() != c->num_outputs()) {
+        return errors::InvalidArgument("Unexpected number of result shapes: ",
+                                       shapes.size(), " != ", c->num_outputs());
+      }
+      for (int i = 0; i < c->num_outputs(); ++i) {
+        shape_inference::ShapeHandle shape;
+        TF_RETURN_IF_ERROR(c->MakeShapeFromTensorShape(shapes[i], &shape));
+        c->set_output(i, shape);
+      }
+      return OkStatus();
+    })
+    .Doc(R"doc(
+Emits an HLO `CustomCall` operation with multiple outputs.
+
+As opposed to `XlaCustomCall`, this operation supports multiple outputs.
+
+See `CustomCall` specification at
+  https://tensorflow.org/xla/operation_semantics#customcall,
+and `mhlo.custom_call` specification at
+  https://tensorflow.org/mlir/hlo_ops#mhlocustom_call_mlirmhlocustomcallop.
+
+operands: A sequence of tensors with possibly different types.
+call_target_name: Name of the user function. The function signature must conform
+  to version 3 of the API, see `API_VERSION_STATUS_RETURNING_UNIFIED`. All
+  operands and results assumed to be in the default layout.
+backend_config: A string that encodes a metadata for the backend.
+has_side_effect: Indicates whether the custom call has side effects.
+result_dtypes: Types of all results.
+result_shapes: Shapes of all results.
+)doc");
+
+REGISTER_OP("XlaCallModule")
+    .Input("args: Tin")
+    .Output("output: Tout")
+    .Attr("version: int")
+    .Attr("module: string")
+    .Attr("Sout: list(shape) >= 0")
+    .Attr("Tout: list(type) >= 0")
+    .Attr("Tin: list(type) >= 0")
+    .Attr("dim_args_spec: list(string) >= 0")
+    .SetShapeFn([](shape_inference::InferenceContext* c) {
+      std::vector<shape_inference::ShapeHandle> args_shapes;
+      TF_RETURN_IF_ERROR(c->input("args", &args_shapes));
+      for (int i = 0; i < args_shapes.size(); ++i) {
+        VLOG(3) << "XlaCallModule.shape_inference args[" << i
+                << "] : " << c->DebugString(args_shapes[i]);
+      }
+      std::vector<PartialTensorShape> shapes_attr;
+      TF_RETURN_IF_ERROR(c->GetAttr("Sout", &shapes_attr));
+      for (int i = 0; i < shapes_attr.size(); ++i) {
+        shape_inference::ShapeHandle s;
+        TF_RETURN_IF_ERROR(
+            c->MakeShapeFromPartialTensorShape(shapes_attr[i], &s));
+        VLOG(3) << "XlaCallModule.shape_inference out[" << i
+                << "] : " << c->DebugString(s);
+        c->set_output(i, s);
+      }
+      return OkStatus();
+    })
+    .Doc(R"doc(
+Temporary op for experimenting with jax2tf.
+
+DO NOT USE THIS OP. It has no backwards compatibility guarantees. It is also
+very likely to change. This op will be used only in jax2tf under an
+experimental flag.
+
+This is an experimental op to allow a smooth evolution of jax2tf towards
+emitting and serializing StableHLO directly from JAX.
+
+The serialized module must return a tuple if and only if the Sout is an empty
+list or a list with more than 1 elements. The length of Tout and Sout must
+match. This op always returns a tuple of results, even if the module returns
+a single result.
+
+The handling of dynamic shapes is work-in-progress. At the moment, the
+JAX lowering for dynamic shapes will prepend one dimension parameter to the
+serialized module for each dimension whose value must be passed in.
+The "args" correspond to the non-dimension arguments. During compilation
+we compute the values of the dimension arguments based on the static shapes of
+the "args". In order to do this, we encode for each dimension argument a
+specification of how to compute its value, as a string, in the form
+"<arg_idx>.<axis_idx>".
+E.g., the specification "2.1" denotes the value args[2].shape[1].
+
+args: A list of `Tensor` with possibly different types to be passed as arguments
+  to the HLO module.
+version: Changes when we change the semantics of the op, to support backwards
+  compatibility. Version 1 carries an MHLO text or bytecode `module`. From
+  version 2, the op carries a StableHLO text or bytecode `module`.
+module: A serialized computation, a text or bytecode representation of
+  an mlir.Module.
+Tout: List of output tensor data types.
+Sout: List of output tensor shapes.
+dim_args_spec: the specification for the dimension arguments, one for each
+  dimension argument. In absence of dynamic shapes this list is empty.
 )doc");
 
 }  // namespace

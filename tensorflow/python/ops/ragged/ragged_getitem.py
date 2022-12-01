@@ -14,10 +14,6 @@
 # ==============================================================================
 """Python-style indexing and slicing for RaggedTensors."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 from tensorflow.python.eager import context
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
@@ -250,7 +246,7 @@ def _ragged_getitem_inner_dimensions(rt_input, key_list):
   if not key_list:
     return rt_input
 
-  if isinstance(rt_input, ops.Tensor):
+  if not isinstance(rt_input, ragged_tensor.RaggedTensor):
     return rt_input.__getitem__([slice(None, None, None)] + key_list)
 
   column_key = key_list[0]

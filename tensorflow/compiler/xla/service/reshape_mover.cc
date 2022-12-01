@@ -40,7 +40,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/shape_util.h"
 #include "tensorflow/compiler/xla/status_macros.h"
 #include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/tsl/platform/errors.h"
 
 namespace xla {
 
@@ -152,7 +152,7 @@ HloInstruction* UpdateOperand(const HloInstruction* first_reshape_operand,
       } else {
         CHECK(first_reshape_operand->opcode() == HloOpcode::kTranspose);
         VLOG(5) << "Adding transpose to kConstant operand";
-        std::vector<int64> inverse_permutation =
+        std::vector<int64_t> inverse_permutation =
             InversePermutation(first_reshape_operand->dimensions());
         return computation->AddInstruction(HloInstruction::CreateTranspose(
             new_shape, operand, inverse_permutation));
@@ -216,7 +216,7 @@ StatusOr<bool> PerformSinkReshapeOrTranspose(
     for (const auto& fused_instruction : instruction->fused_instructions()) {
       Shape* shape = fused_instruction->mutable_shape();
       shape->clear_dimensions();
-      for (int64 i : new_operand_shape.dimensions()) {
+      for (int64_t i : new_operand_shape.dimensions()) {
         shape->add_dimensions(i);
       }
       *shape->mutable_layout() = new_operand_shape.layout();
@@ -268,10 +268,8 @@ bool IsReshapeMoveCandidate(HloInstruction* instruction) {
           << instruction->ToString(print_no_metadata);
 
   // Only perform reshape-move for live elementwise instructions with operands.
-  const bool is_dead = instruction->user_count() == 0 &&
-                       instruction != instruction->parent()->root_instruction();
   if (!instruction->IsElementwise() || instruction->operands().empty() ||
-      is_dead) {
+      instruction->IsDead()) {
     return false;
   }
 
@@ -390,11 +388,11 @@ StatusOr<bool> TryReshapeMoveOnCandidates(
 
 }  // namespace
 
-StatusOr<bool> ReshapeMover::Run(HloModule* module) {
+StatusOr<bool> ReshapeMover::Run(
+    HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
-  VLOG(6) << "Pre ReshapeMover HLO:";
-  XLA_VLOG_LINES(6, module->ToString());
-  for (auto* comp : module->MakeNonfusionComputations()) {
+  for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
     HloInstructionSet reshape_candidates;
     for (HloInstruction* instruction : comp->instructions()) {
       if (IsReshapeMoveCandidate(instruction)) {
@@ -405,8 +403,6 @@ StatusOr<bool> ReshapeMover::Run(HloModule* module) {
                         TryReshapeMoveOnCandidates(&reshape_candidates));
     changed |= did_change;
   }
-  VLOG(6) << "Post ReshapeMover HLO:";
-  XLA_VLOG_LINES(6, module->ToString());
   return changed;
 }
 

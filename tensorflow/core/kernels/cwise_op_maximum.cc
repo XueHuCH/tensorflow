@@ -19,12 +19,14 @@ namespace tensorflow {
 REGISTER4(BinaryOp, CPU, "Maximum", functor::maximum, float, Eigen::half,
           bfloat16, double);
 REGISTER8(BinaryOp, CPU, "Maximum", functor::maximum, int8, uint8, int16,
-          uint16, int32, uint32, int64, uint64);
+          uint16, int32, uint32, int64_t, uint64);
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #if !defined(MLIR_GENERATED_GPU_KERNELS_ENABLED)
 REGISTER6(BinaryOp, GPU, "Maximum", functor::maximum, float, Eigen::half,
           double, uint8, int16, int64);
 #endif
+
+REGISTER(BinaryOp, GPU, "Maximum", functor::maximum, bfloat16);
 
 // A special GPU kernel for int32.
 // TODO(b/25387198): Also enable int32 in device memory. This kernel

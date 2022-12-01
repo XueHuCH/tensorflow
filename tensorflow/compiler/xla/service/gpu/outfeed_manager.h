@@ -16,12 +16,14 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_OUTFEED_MANAGER_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_OUTFEED_MANAGER_H_
 
+#include <memory>
+#include <utility>
+
 #include "tensorflow/compiler/xla/literal.h"
 #include "tensorflow/compiler/xla/service/gpu/xfeed_queue.h"
 #include "tensorflow/compiler/xla/shape_tree.h"
-#include "tensorflow/core/platform/mutex.h"
-#include "tensorflow/core/platform/notification.h"
-#include "tensorflow/core/platform/stream_executor_no_cuda.h"
+#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
+#include "tensorflow/tsl/platform/notification.h"
 
 namespace xla {
 namespace gpu {
@@ -39,7 +41,7 @@ class OutfeedBuffer {
   // Waits for the device transfer to be finished.
   void WaitUntilAvailable() { done_.WaitForNotification(); }
 
-  int64 length() const { return length_; }
+  int64_t length() const { return length_; }
   void set_destination(std::unique_ptr<MutableBorrowingLiteral> destination) {
     destination_ = std::move(destination);
   }
@@ -50,8 +52,8 @@ class OutfeedBuffer {
 
  private:
   std::unique_ptr<MutableBorrowingLiteral> destination_;
-  const int64 length_;
-  tensorflow::Notification done_;
+  const int64_t length_;
+  tsl::Notification done_;
 };
 
 // Manages a thread-safe queue of buffers. The buffers are supposed to be

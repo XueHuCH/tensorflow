@@ -15,11 +15,11 @@ limitations under the License.
 
 #include "tensorflow/compiler/xla/service/gpu/conditional_thunk.h"
 
-#include "absl/memory/memory.h"
-#include "tensorflow/compiler/xla/service/gpu/hlo_execution_profiler.h"
-#include "tensorflow/compiler/xla/service/hlo_instruction.h"
+#include <memory>
+
+#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
 #include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/tsl/platform/errors.h"
 
 namespace xla {
 namespace gpu {
@@ -41,21 +41,21 @@ Status ConditionalThunk::Initialize(const GpuExecutable& executable,
   for (auto& branch_thunk : config_.branch_thunks) {
     TF_RETURN_IF_ERROR(branch_thunk->Initialize(executable, executor));
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 Status ConditionalThunk::ExecuteOnStream(const ExecuteParams& params) {
   auto& stream = *params.stream;
 
   // Copy the predicate value from device.
-  int32 branch_index = -1;
+  int32_t branch_index = -1;
   bool pred = false;
   se::DeviceMemoryBase branch_index_address =
       params.buffer_allocations->GetDeviceAddress(branch_index_buffer_index_);
   if (config_.branch_index_is_bool) {
     stream.ThenMemcpy(&pred, branch_index_address, sizeof(bool));
   } else {
-    stream.ThenMemcpy(&branch_index, branch_index_address, sizeof(int32));
+    stream.ThenMemcpy(&branch_index, branch_index_address, sizeof(int32_t));
   }
 
   Status block_status = stream.BlockHostUntilDone();
@@ -77,7 +77,7 @@ Status ConditionalThunk::ExecuteOnStream(const ExecuteParams& params) {
   TF_RETURN_IF_ERROR(
       config_.branch_thunks[branch_index]->ExecuteOnStream(params));
 
-  return Status::OK();
+  return OkStatus();
 }
 
 }  // namespace gpu

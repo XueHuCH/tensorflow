@@ -1,6 +1,7 @@
 load("//tensorflow:tensorflow.bzl", "py_binary", "tf_py_test")
 
 package(
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         "//tensorflow/lite:__subpackages__",
         "//tensorflow/tools/pip_package:__subpackages__",
@@ -41,7 +42,7 @@ cc_library(
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
-        "//tensorflow/lite/c:common",
+        "//tensorflow/lite/core/c:common",
         "//tensorflow/lite/core/api",
         "//tensorflow/lite/python/interpreter_wrapper:python_utils",
         "//tensorflow/lite/python/interpreter_wrapper:python_error_reporter",
@@ -55,12 +56,14 @@ cc_library(
         "//tensorflow/lite/toco:toco_port",
         "//tensorflow/lite/toco:toco_tooling",
         "//tensorflow/lite/toco:tooling_util",
+        "//tensorflow/lite/toco:types_proto_cc",
+        "//tensorflow/compiler/mlir/lite/python:flatbuffer_to_mlir",
         "//tensorflow/compiler/mlir/lite/python:graphdef_to_tfl_flatbuffer",
         "//tensorflow/compiler/mlir/lite/python:saved_model_to_tfl_flatbuffer",
+        "//tensorflow/compiler/mlir/lite/python:jax_to_tfl_flatbuffer",
         "//tensorflow/compiler/mlir/lite/quantization/lite:quantize_model",
         "//tensorflow/compiler/mlir/lite/sparsity:sparsify_model",
         "//tensorflow/compiler/mlir/lite/metrics:error_collector",
-        "//tensorflow/lite/toco:types_proto_cc",
     ] + select({
         # This is required when running `tflite_convert` from `bazel`.
         # It requires to link with TensorFlow Ops to get the op definitions.

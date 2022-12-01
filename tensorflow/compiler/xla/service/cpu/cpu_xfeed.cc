@@ -15,12 +15,15 @@ limitations under the License.
 
 #include "tensorflow/compiler/xla/service/cpu/cpu_xfeed.h"
 
+#include <cstring>
+#include <limits>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/base/casts.h"
-#include "absl/memory/memory.h"
+#include "absl/cleanup/cleanup.h"
 #include "tensorflow/compiler/xla/literal.h"
 #include "tensorflow/compiler/xla/literal_util.h"
 #include "tensorflow/compiler/xla/service/cpu/cpu_runtime.h"
@@ -32,32 +35,31 @@ limitations under the License.
 #include "tensorflow/compiler/xla/statusor.h"
 #include "tensorflow/compiler/xla/types.h"
 #include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/core/lib/core/errors.h"
-#include "tensorflow/core/lib/gtl/cleanup.h"
-#include "tensorflow/core/platform/logging.h"
-#include "tensorflow/core/platform/notification.h"
+#include "tensorflow/tsl/platform/errors.h"
+#include "tensorflow/tsl/platform/logging.h"
+#include "tensorflow/tsl/platform/notification.h"
 
 namespace xla {
 namespace {
 
 class CpuInfeedBuffer : public cpu::runtime::XfeedBuffer {
  public:
-  explicit CpuInfeedBuffer(int32 length)
+  explicit CpuInfeedBuffer(int32_t length)
       : length_(length), buffer_(new char[length]) {}
   ~CpuInfeedBuffer() override { delete[] buffer_; }
 
-  int32 length() override { return length_; }
+  int32_t length() override { return length_; }
   void* data() override { return buffer_; }
   void Done(StatusOr<Shape> /*shape*/) override { delete this; }
 
  private:
-  int32 length_;
+  int32_t length_;
   char* buffer_;
 };
 
 class CpuOutfeedBuffer : public cpu::runtime::XfeedBuffer {
  public:
-  CpuOutfeedBuffer(void* destination, int32 length)
+  CpuOutfeedBuffer(void* destination, int32_t length)
       : destination_(destination), length_(length) {}
 
   StatusOr<Shape> WaitForNotification() {
@@ -65,7 +67,7 @@ class CpuOutfeedBuffer : public cpu::runtime::XfeedBuffer {
     return status_;
   }
 
-  int32 length() override { return length_; }
+  int32_t length() override { return length_; }
   void* data() override { return destination_; }
   void Done(StatusOr<Shape> shape) override {
     status_ = std::move(shape);
@@ -74,18 +76,18 @@ class CpuOutfeedBuffer : public cpu::runtime::XfeedBuffer {
 
  private:
   void* destination_;
-  int32 length_;
+  int32_t length_;
   StatusOr<Shape> status_;
-  tensorflow::Notification done_;
+  tsl::Notification done_;
 };
 
 // Transfers infeed data to device. InfeedBuffer->Done() must be called to
 // clean up the memory allocated for InfeedBuffer.
 StatusOr<cpu::runtime::XfeedBuffer*> TransferBufferToInfeedInternal(
     int64_t size, const void* source) {
-  if (size > std::numeric_limits<int32>::max()) {
+  if (size > std::numeric_limits<int32_t>::max()) {
     return InvalidArgument("CPU infeed of %d bytes exceeds maximum of %d bytes",
-                           size, std::numeric_limits<int32>::max());
+                           size, std::numeric_limits<int32_t>::max());
   }
 
   if (size <= 0) {
@@ -93,7 +95,7 @@ StatusOr<cpu::runtime::XfeedBuffer*> TransferBufferToInfeedInternal(
                            size);
   }
 
-  auto size_32 = static_cast<int32>(size);
+  auto size_32 = static_cast<int32_t>(size);
   auto queued_buffer = new CpuInfeedBuffer(size_32);
   std::memcpy(queued_buffer->data(), source, size);
 
@@ -109,16 +111,16 @@ Status TransferBufferToInfeed(int device_ordinal, int64_t size,
       cpu::runtime::GetXfeedManager(device_ordinal);
   xfeed_manager->infeed()->EnqueueBuffersAtomically({buffer});
 
-  return Status::OK();
+  return OkStatus();
 }
 
 StatusOr<Shape> TransferBuffersFromOutfeedInternal(
-    int device_ordinal, absl::Span<const std::pair<void*, int64>> buffer_data,
+    int device_ordinal, absl::Span<const std::pair<void*, int64_t>> buffer_data,
     bool is_tuple) {
   std::vector<std::unique_ptr<CpuOutfeedBuffer>> buffers;
   for (auto b : buffer_data) {
     int64_t size = b.second;
-    if (size > std::numeric_limits<int32>::max()) {
+    if (size > std::numeric_limits<int32_t>::max()) {
       return InvalidArgument("Outfeed shape is too large: needs %d bytes",
                              size);
     }
@@ -128,11 +130,11 @@ StatusOr<Shape> TransferBuffersFromOutfeedInternal(
           "Outfeed shape must have non-negative size; got %d", size);
     }
 
-    auto size_32 = static_cast<int32>(size);
+    auto size_32 = static_cast<int32_t>(size);
     VLOG(2)
         << "Enqueueing outfeed buffer (for the device to populate) of length "
         << size_32 << "B";
-    buffers.push_back(absl::make_unique<CpuOutfeedBuffer>(b.first, size_32));
+    buffers.push_back(std::make_unique<CpuOutfeedBuffer>(b.first, size_32));
   }
 
   std::vector<cpu::runtime::XfeedBuffer*> buffer_pointers;
@@ -146,6 +148,7 @@ StatusOr<Shape> TransferBuffersFromOutfeedInternal(
   xfeed_manager->outfeed()->EnqueueBuffersAtomically(buffer_pointers);
   VLOG(2) << "Waiting for buffer to be notified as populated.";
   std::vector<Shape> outfed_shapes;
+  outfed_shapes.reserve(buffers.size());
   for (auto& buffer : buffers) {
     TF_ASSIGN_OR_RETURN(Shape outfed_shape, buffer->WaitForNotification());
     outfed_shapes.push_back(std::move(outfed_shape));
@@ -165,7 +168,8 @@ StatusOr<Shape> TransferArrayBufferFromOutfeed(int device_ordinal,
 }
 
 StatusOr<Shape> TransferTupleBuffersFromOutfeed(
-    int device_ordinal, absl::Span<const std::pair<void*, int64>> buffer_data) {
+    int device_ordinal,
+    absl::Span<const std::pair<void*, int64_t>> buffer_data) {
   return TransferBuffersFromOutfeedInternal(device_ordinal, buffer_data,
                                             /*is_tuple=*/true);
 }
@@ -193,11 +197,11 @@ Status TransferLiteralToInfeedOnCpu(int device_ordinal,
   // infeed manager.
   std::vector<cpu::runtime::XfeedBuffer*> buffers;
   buffers.reserve(ShapeUtil::TupleElementCount(shape));
-  auto cleanup = tensorflow::gtl::MakeCleanup([&buffers]() {
+  absl::Cleanup cleanup = [&buffers]() {
     for (cpu::runtime::XfeedBuffer* b : buffers) {
       b->Done(Cancelled("Failed to infeed buffer to device."));
     }
-  });
+  };
 
   for (int64_t i = 0; i < ShapeUtil::TupleElementCount(shape); ++i) {
     const Shape& tuple_element_shape = ShapeUtil::GetSubshape(shape, {i});
@@ -213,8 +217,8 @@ Status TransferLiteralToInfeedOnCpu(int device_ordinal,
       cpu::runtime::GetXfeedManager(device_ordinal);
   xfeed_manager->infeed()->EnqueueBuffersAtomically(buffers);
 
-  cleanup.release();
-  return Status::OK();
+  std::move(cleanup).Cancel();
+  return OkStatus();
 }
 
 Status TransferLiteralFromOutfeedOnCpu(int device_ordinal,
@@ -224,8 +228,8 @@ Status TransferLiteralFromOutfeedOnCpu(int device_ordinal,
         cpu::runtime::GetByteSizeRequirement(literal.shape(), sizeof(void*));
     // Note: OSS build didn't like implicit conversion from
     // literal.shape().dimensions() to the array slice on 2017-07-10.
-    absl::Span<const int64> dimensions(
-        absl::bit_cast<const int64*>(literal.shape().dimensions().data()),
+    absl::Span<const int64_t> dimensions(
+        absl::bit_cast<const int64_t*>(literal.shape().dimensions().data()),
         literal.shape().dimensions().size());
     TF_ASSIGN_OR_RETURN(Shape received_shape,
                         TransferArrayBufferFromOutfeed(
@@ -238,7 +242,7 @@ Status TransferLiteralFromOutfeedOnCpu(int device_ordinal,
     TF_RET_CHECK(size == cpu::runtime::GetByteSizeRequirement(received_shape,
                                                               sizeof(void*)));
     *literal.mutable_shape_do_not_use() = received_shape;
-    return Status::OK();
+    return OkStatus();
   }
 
   if (ShapeUtil::IsNestedTuple(literal.shape())) {
@@ -246,8 +250,8 @@ Status TransferLiteralFromOutfeedOnCpu(int device_ordinal,
         "Nested tuple outfeeds are not yet implemented on CPU.");
   }
 
-  std::vector<std::pair<void*, int64>> buffer_data;
-  for (int64_t i = 0; i < literal.shape().tuple_shapes_size(); ++i) {
+  std::vector<std::pair<void*, int64_t>> buffer_data;
+  for (int i = 0; i < literal.shape().tuple_shapes_size(); ++i) {
     const Shape& tuple_element_shape =
         ShapeUtil::GetTupleElementShape(literal.shape(), i);
     int64_t size = cpu::runtime::GetByteSizeRequirement(tuple_element_shape,
@@ -268,7 +272,7 @@ Status TransferLiteralFromOutfeedOnCpu(int device_ordinal,
       cpu::runtime::GetByteSizeRequirement(received_shape, sizeof(void*)));
 
   TF_RET_CHECK(ShapeUtil::Equal(literal.shape(), literal.shape()));
-  return Status::OK();
+  return OkStatus();
 }
 
 Status ReadDynamicShapesOnCpu(
@@ -281,35 +285,35 @@ Status ReadDynamicShapesOnCpu(
         const Shape& buffer_shape =
             ShapeUtil::GetSubshape(*device_shape, index);
         if (buffer_shape.IsTuple()) {
-          return Status::OK();
+          return OkStatus();
         }
         Shape& device_sub_shape =
             *ShapeUtil::GetMutableSubshape(device_shape, index);
         if (device_sub_shape.is_static()) {
-          return Status::OK();
+          return OkStatus();
         }
         void* memory = buffer->opaque();
 
         // Read the dynamic shape metadata from the device stream.
         Shape buffer_shape_static = ShapeUtil::MakeStaticShape(buffer_shape);
-        const int64 offset = shape_size_fn(buffer_shape_static);
+        const int64_t offset = shape_size_fn(buffer_shape_static);
         int64_t metadata_size = shape_size_fn(buffer_shape) - offset;
         if (metadata_size == 0) {
           return InvalidArgument("Dynamic shape metadata size should not be 0");
         }
-        auto buffer_8 = static_cast<int8*>(memory);
-        auto metadata_buffer = reinterpret_cast<int32*>(buffer_8 + offset);
+        auto buffer_8 = static_cast<int8_t*>(memory);
+        auto metadata_buffer = reinterpret_cast<int32_t*>(buffer_8 + offset);
 
         // Update shape size from metadata.
         for (int64_t i = 0; i < device_sub_shape.rank(); ++i) {
           device_sub_shape.mutable_dimensions()[i] = metadata_buffer[i];
         }
-        return Status::OK();
+        return OkStatus();
       }));
   device_shape->clear_dynamic_dimensions();
 
   TF_RET_CHECK(ShapeUtil::DynamicShapeIsCompatible(*device_shape,
                                                    original_device_shape));
-  return Status::OK();
+  return OkStatus();
 }
 }  // namespace xla

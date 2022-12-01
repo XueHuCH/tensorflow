@@ -12,8 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_CORE_TPU_KERNELS_COMPILATION_CACHE_ENTRY_UNLOADER_H_
-#define TENSORFLOW_CORE_TPU_KERNELS_COMPILATION_CACHE_ENTRY_UNLOADER_H_
+#ifndef TENSORFLOW_CORE_TPU_KERNELS_TPU_COMPILATION_CACHE_ENTRY_UNLOADER_H_
+#define TENSORFLOW_CORE_TPU_KERNELS_TPU_COMPILATION_CACHE_ENTRY_UNLOADER_H_
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/synchronization/mutex.h"
@@ -60,10 +60,10 @@ class TpuCompilationCacheEntryUnloader : public ResourceBase {
   TF_DISALLOW_COPY_AND_ASSIGN(TpuCompilationCacheEntryUnloader);
   mutable absl::Mutex mu_;
   TpuCompilationCacheInterface* cache_;  // Not owned.
-  absl::flat_hash_set<int64> cache_entry_uids_ ABSL_GUARDED_BY(mu_);
+  absl::flat_hash_set<int64_t> cache_entry_uids_ ABSL_GUARDED_BY(mu_);
 };
 
 }  // namespace tpu
 }  // namespace tensorflow
 
-#endif  // TENSORFLOW_CORE_TPU_KERNELS_COMPILATION_CACHE_ENTRY_UNLOADER_H_
+#endif  // TENSORFLOW_CORE_TPU_KERNELS_TPU_COMPILATION_CACHE_ENTRY_UNLOADER_H_

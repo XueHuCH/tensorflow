@@ -23,6 +23,7 @@ limitations under the License.
 #include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/lib/strings/stringprintf.h"
 #include "tensorflow/core/platform/env.h"
+#include "tensorflow/core/platform/test.h"
 #include "tensorflow/core/platform/tracing.h"
 
 namespace tensorflow {
@@ -65,7 +66,7 @@ class GrpcDebugTest : public ::testing::Test {
 
   void ClearEnabledWatchKeys() { DebugGrpcIO::ClearEnabledWatchKeys(); }
 
-  const int64 GetChannelConnectionTimeoutMicros() {
+  const int64_t GetChannelConnectionTimeoutMicros() {
     return DebugGrpcIO::channel_connection_timeout_micros_;
   }
 
@@ -177,7 +178,7 @@ TEST_F(GrpcDebugTest, SendDebugTensorWithLargeStringAtIndex1ViaGrpcTest) {
 }
 
 TEST_F(GrpcDebugTest, SendMultipleDebugTensorsSynchronizedViaGrpcTest) {
-  const int32 kSends = 4;
+  const int32_t kSends = 4;
 
   // Prepare the tensors to sent.
   std::vector<Tensor> tensors;

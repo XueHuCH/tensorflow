@@ -23,19 +23,19 @@ limitations under the License.
 #include <vector>
 
 #include "absl/types/span.h"
+#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
+#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
 #include "tensorflow/compiler/xla/service/backend.h"
 #include "tensorflow/compiler/xla/service/compiler.h"
 #include "tensorflow/compiler/xla/service/computation_placer.h"
 #include "tensorflow/compiler/xla/service/executable.h"
-#include "tensorflow/compiler/xla/service/hlo_computation.h"
-#include "tensorflow/compiler/xla/service/hlo_module.h"
 #include "tensorflow/compiler/xla/service/hlo_runner_interface.h"
 #include "tensorflow/compiler/xla/status_macros.h"
 #include "tensorflow/compiler/xla/statusor.h"
+#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
 #include "tensorflow/compiler/xla/types.h"
 #include "tensorflow/compiler/xla/util.h"
 #include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/core/platform/stream_executor_no_cuda.h"
 
 namespace xla {
 
@@ -126,10 +126,11 @@ class HloRunner : public HloRunnerInterface {
   // Note that this call ignores ReplicatedExecutionOptions::run_hlo_passes,
   // since we've already compiled the Executable.
   StatusOr<std::vector<Literal>> ExecuteReplicated(
-      std::function<Executable*(int64)> executable_provider,
-      std::function<int64(int64)> argument_count_provider,
-      std::function<const Literal*(int64, int64)> argument_provider,
-      const ReplicatedExecuteOptions& options);
+      std::function<Executable*(int64_t)> executable_provider,
+      std::function<int64_t(int64_t)> argument_count_provider,
+      std::function<const Literal*(int64_t, int64_t)> argument_provider,
+      const ReplicatedExecuteOptions& options,
+      DeviceAssignment* device_assignment = nullptr);
 
   // If backend is not created in the constructor, creates and returns the
   // default backend. If creation fails, crashes the program.
@@ -139,13 +140,19 @@ class HloRunner : public HloRunnerInterface {
   Backend& backend();
   const Backend& backend() const;
 
+  absl::string_view Name() const override;
+
+  DeviceShapeRepresentationFn device_shape_representation_fn() {
+    return device_shape_representation_fn_;
+  }
+
  private:
   // Creates a ServiceExecutableRunOptions object to configure a run on device,
   // using the provided stream object. If device_assignment is not nullptr, it
   // will be used to configure the replication parameters. Replicated executions
   // should pass the device_assignment parameter.
   ServiceExecutableRunOptions GetServiceRunOptionsForDevice(
-      int64 device, se::Stream* stream, DeviceAssignment* device_assignment,
+      int64_t device, se::Stream* stream, DeviceAssignment* device_assignment,
       RunId run_id);
 
   // Common implementation code for ExecuteReplicated() above.
@@ -154,8 +161,8 @@ class HloRunner : public HloRunnerInterface {
           const std::vector<ServiceExecutableRunOptions>&,
           const std::vector<absl::Span<const ShapedBuffer* const>>&)>
           execution_helper,
-      std::function<int64(int64)> argument_count_provider,
-      std::function<const Literal*(int64, int64)> argument_provider,
+      std::function<int64_t(int64_t)> argument_count_provider,
+      std::function<const Literal*(int64_t, int64_t)> argument_provider,
       const ReplicatedExecuteOptions& options,
       DeviceAssignment* device_assignment);
 

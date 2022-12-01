@@ -27,7 +27,7 @@ namespace tensorflow {
 namespace {
 
 template <typename T>
-Status TensorValueAt(Tensor t, int64 i, T* out) {
+Status TensorValueAt(Tensor t, int64_t i, T* out) {
 #define CASE(I)                            \
   case DataTypeToEnum<I>::value:           \
     *out = static_cast<T>(t.flat<I>()(i)); \
@@ -58,7 +58,7 @@ Status TensorValueAt(Tensor t, int64 i, T* out) {
                                      " not supported.");
   }
   // clang-format on
-  return Status::OK();
+  return OkStatus();
 #undef CASE
 #undef COMPLEX_CASE
 }
@@ -102,7 +102,7 @@ Status AddImages(const string& tag, int max_images, int batch_size, int w,
       return errors::Internal("PNG encoding failed");
     }
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 template <class T>
@@ -211,7 +211,7 @@ Status AddTensorAsScalarToSummary(const Tensor& t, const string& tag,
   float value;
   TF_RETURN_IF_ERROR(TensorValueAt<float>(t, 0, &value));
   v->set_simple_value(value);
-  return Status::OK();
+  return OkStatus();
 }
 
 Status AddTensorAsHistogramToSummary(const Tensor& t, const string& tag,
@@ -219,7 +219,7 @@ Status AddTensorAsHistogramToSummary(const Tensor& t, const string& tag,
   Summary::Value* v = s->add_value();
   v->set_tag(tag);
   histogram::Histogram histo;
-  for (int64 i = 0; i < t.NumElements(); i++) {
+  for (int64_t i = 0; i < t.NumElements(); i++) {
     double double_val;
     TF_RETURN_IF_ERROR(TensorValueAt<double>(t, i, &double_val));
     if (Eigen::numext::isnan(double_val)) {
@@ -231,7 +231,7 @@ Status AddTensorAsHistogramToSummary(const Tensor& t, const string& tag,
     histo.Add(double_val);
   }
   histo.EncodeToProto(v->mutable_histo(), false /* Drop zero buckets */);
-  return Status::OK();
+  return OkStatus();
 }
 
 Status AddTensorAsImageToSummary(const Tensor& tensor, const string& tag,
@@ -280,7 +280,7 @@ Status AddTensorAsImageToSummary(const Tensor& tensor, const string& tag,
         "Got ",
         DataTypeString(tensor.dtype()));
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 Status AddTensorAsAudioToSummary(const Tensor& tensor, const string& tag,
@@ -290,8 +290,8 @@ Status AddTensorAsAudioToSummary(const Tensor& tensor, const string& tag,
     return errors::InvalidArgument("sample_rate must be > 0");
   }
   const int batch_size = tensor.dim_size(0);
-  const int64 length_frames = tensor.dim_size(1);
-  const int64 num_channels =
+  const int64_t length_frames = tensor.dim_size(1);
+  const int64_t num_channels =
       tensor.dims() == 2 ? 1 : tensor.dim_size(tensor.dims() - 1);
   const int N = std::min<int>(max_outputs, batch_size);
   for (int i = 0; i < N; ++i) {
@@ -321,7 +321,7 @@ Status AddTensorAsAudioToSummary(const Tensor& tensor, const string& tag,
         channels_by_frames.data(), sample_rate_truncated, num_channels,
         length_frames, sa->mutable_encoded_audio_string()));
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 }  // namespace tensorflow

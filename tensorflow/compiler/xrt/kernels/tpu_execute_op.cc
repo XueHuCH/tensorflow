@@ -19,11 +19,13 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "tensorflow/compiler/jit/xla_device.h"
+#include "tensorflow/compiler/xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "tensorflow/compiler/xla/service/computation_placer.h"
-#include "tensorflow/compiler/xla/service/hlo_input_output_alias_config.h"
 #include "tensorflow/compiler/xla/shape_util.h"
 #include "tensorflow/compiler/xla/status_macros.h"
 #include "tensorflow/compiler/xla/statusor.h"
+#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
+#include "tensorflow/compiler/xla/stream_executor/stream_executor_internal.h"
 #include "tensorflow/compiler/xla/xla_data.pb.h"
 #include "tensorflow/compiler/xrt/xrt.pb.h"
 #include "tensorflow/compiler/xrt/xrt_memory_manager.h"
@@ -45,8 +47,6 @@ limitations under the License.
 #include "tensorflow/core/tpu/tpu_configuration.h"
 #include "tensorflow/core/tpu/tpu_defs.h"
 #include "tensorflow/core/tpu/tpu_execute.h"
-#include "tensorflow/stream_executor/stream_executor.h"
-#include "tensorflow/stream_executor/stream_executor_internal.h"
 
 namespace tensorflow {
 namespace {
@@ -68,7 +68,7 @@ Status GetComputationCacheEntry(
                                 &proto_lookup));
   core::ScopedUnref lookup_unref(proto_lookup);
   TF_RETURN_IF_ERROR(proto_lookup->Lookup(key, core_index_in_replica, entry));
-  return Status::OK();
+  return OkStatus();
 }
 
 std::vector<bool> GetDynamicInputInfo(
@@ -294,7 +294,7 @@ Status XRTExecuteOp::DoWork(OpKernelContext* context) {
 
   const Tensor& execution_input = context->input(0);
   TF_RET_CHECK(TensorShapeUtils::IsScalar(execution_input.shape()));
-  int64_t compilation_handle = execution_input.scalar<int64>()();
+  int64_t compilation_handle = execution_input.scalar<int64_t>()();
 
   const Tensor& execution_config = context->input(1);
   TF_RET_CHECK(TensorShapeUtils::IsScalar(execution_config.shape()));
@@ -367,7 +367,7 @@ Status XRTExecuteOp::DoWork(OpKernelContext* context) {
       context, memory_manager.get(), node_context.get(), stream, config_proto,
       executable, input_tuples, input_output_alias, output.ConsumeResult(),
       device_ordinal));
-  return Status::OK();
+  return OkStatus();
 }
 
 class XRTExecuteChainedOp : public AsyncOpKernel {

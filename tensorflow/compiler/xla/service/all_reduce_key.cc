@@ -15,40 +15,43 @@ limitations under the License.
 
 #include "tensorflow/compiler/xla/service/all_reduce_key.h"
 
-#include "tensorflow/compiler/xla/service/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/service/hlo_instructions.h"
+#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
+#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
 
 namespace xla {
 
 // Returns a key that will be equal for all-reduce instructions that are
 // compatible with each other, and hence might be combined, or different if not.
-absl::optional<AllReduceKey> GetAllReduceKey(const HloInstruction* instruction,
-                                             const HloDomainMap* domain_map) {
+std::optional<AllReduceKey> GetAllReduceKey(const HloInstruction* instruction,
+                                            const HloDomainMap* domain_map,
+                                            bool ignore_replica_groups) {
   if (instruction->opcode() != HloOpcode::kAllReduce &&
       instruction->opcode() != HloOpcode::kReduceScatter) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   if (instruction->to_apply()->instruction_count() != 3 ||
       instruction->to_apply()->num_parameters() != 2) {
     VLOG(1) << "Skipping due to non-trivial reduction function.";
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   const auto* ar = Cast<HloAllReduceInstructionBase>(instruction);
 
   std::vector<std::vector<int64_t>> replica_groups;
-  replica_groups.reserve(ar->replica_groups().size());
-  for (const ReplicaGroup& replica_group : ar->replica_groups()) {
-    replica_groups.push_back(
-        std::vector<int64_t>(replica_group.replica_ids().begin(),
-                             replica_group.replica_ids().end()));
+  if (!ignore_replica_groups) {
+    replica_groups.reserve(ar->replica_groups().size());
+    for (const ReplicaGroup& replica_group : ar->replica_groups()) {
+      replica_groups.push_back(
+          std::vector<int64_t>(replica_group.replica_ids().begin(),
+                               replica_group.replica_ids().end()));
+    }
   }
 
   const HloInstruction* to_apply_root = ar->to_apply()->root_instruction();
   // Domain metadata id returned by `GetDomainMetadataId` is guaranteed to be >=
   // 0, so use -1 when we don't need to track domain metadata id.
-  int64 domain_metadata_id =
+  int64_t domain_metadata_id =
       domain_map ? domain_map->GetDomainMetadataId(ar) : -1;
   return AllReduceKey{
       to_apply_root->opcode(),     to_apply_root->shape().element_type(),

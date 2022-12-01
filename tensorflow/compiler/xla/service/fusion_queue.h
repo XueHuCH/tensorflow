@@ -19,7 +19,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/service/hlo_instruction.h"
+#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
 
 namespace xla {
 
@@ -32,7 +32,7 @@ class FusionQueue {
 
   // Dequeues the next fusion candidates: a consumer and the list of producers
   // as operand indices.
-  virtual std::pair<HloInstruction*, std::vector<int64>>
+  virtual std::pair<HloInstruction*, std::vector<int64_t>>
   DequeueNextInstructionAndOperandsToFuseInOrder() = 0;
 
   // A callback passed to the queue implementation right before the producer is

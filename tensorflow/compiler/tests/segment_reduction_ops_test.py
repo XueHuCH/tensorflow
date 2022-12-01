@@ -14,10 +14,6 @@
 # ==============================================================================
 """Test cases for segment reduction ops."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import functools
 
 import numpy as np
@@ -45,6 +41,10 @@ class SegmentReductionOpsTest(xla_test.XLATestCase):
     return self._segmentReduction(math_ops.unsorted_segment_sum, data, indices,
                                   num_segments)
 
+  def _segmentSumV2(self, data, indices, num_segments):
+    return self._segmentReduction(math_ops.segment_sum_v2, data, indices,
+                                  num_segments)
+
   def _unsortedSegmentProd(self, data, indices, num_segments):
     return self._segmentReduction(math_ops.unsorted_segment_prod, data, indices,
                                   num_segments)
@@ -56,6 +56,14 @@ class SegmentReductionOpsTest(xla_test.XLATestCase):
   def _unsortedSegmentMax(self, data, indices, num_segments):
     return self._segmentReduction(math_ops.unsorted_segment_max, data, indices,
                                   num_segments)
+
+  def testSegmentSum(self):
+    for dtype in self.numeric_types:
+      self.assertAllClose(
+          np.array([1, 0, 2, 12], dtype=dtype),
+          self._segmentSumV2(
+              np.array([0, 1, 2, 3, 4, 5], dtype=dtype),
+              np.array([0, 0, 2, 3, 3, 3], dtype=np.int32), 4))
 
   def testUnsortedSegmentSum0DIndices1DData(self):
     for dtype in self.numeric_types:

@@ -34,7 +34,7 @@ limitations under the License.
 
 namespace tensorflow {
 
-PriorityQueue::PriorityQueue(int32 capacity,
+PriorityQueue::PriorityQueue(int32_t capacity,
                              const DataTypeVector& component_dtypes,
                              const std::vector<TensorShape>& component_shapes,
                              const string& name)
@@ -57,7 +57,7 @@ Status PriorityQueue::Initialize() {
         "is: ",
         component_shapes_[0].DebugString());
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 void PriorityQueue::DequeueLocked(OpKernelContext* ctx, Tuple* tuple) {
@@ -95,7 +95,7 @@ void PriorityQueue::TryEnqueue(const Tuple& tuple, OpKernelContext* ctx,
                     tuple[0].shape().DebugString()));
                 return kComplete;
               }
-              const int64 priority = tuple[0].scalar<int64>()();
+              const int64_t priority = tuple[0].scalar<int64_t>()();
               for (int i = 0; i < num_components(); ++i) {
                 queues_[i].emplace(priority, tuple[i]);
               }
@@ -124,12 +124,12 @@ Status PriorityQueue::GetElementComponentFromBatch(
       ctx->allocate_temp(tuple[component].dtype(), element_shape, out_element));
   TF_RETURN_IF_ERROR(
       batch_util::CopySliceToElement(tuple[component], out_element, index));
-  return Status::OK();
+  return OkStatus();
 }
 
 void PriorityQueue::TryEnqueueMany(const Tuple& tuple, OpKernelContext* ctx,
                                    DoneCallback callback) {
-  const int64 batch_size = tuple[0].dim_size(0);
+  const int64_t batch_size = tuple[0].dim_size(0);
   if (batch_size == 0) {
     callback();
     return;
@@ -168,7 +168,7 @@ void PriorityQueue::TryEnqueueMany(const Tuple& tuple, OpKernelContext* ctx,
                     priority_element.shape().DebugString()));
                 return kComplete;
               }
-              const int64 priority = priority_element.scalar<int64>()();
+              const int64_t priority = priority_element.scalar<int64_t>()();
               for (int i = 0; i < num_components(); ++i) {
                 Tensor element;
                 attempt->context->SetStatus(GetElementComponentFromBatch(
@@ -207,7 +207,7 @@ void PriorityQueue::TryDequeue(OpKernelContext* ctx,
       dequeue_attempts_.emplace_back(
           1, [callback]() { callback(Tuple()); }, ctx, cm, token,
           [callback, this](Attempt* attempt) TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
-            const int32 s = queues_[0].size();
+            const int32_t s = queues_[0].size();
             if (closed_ && s == 0) {
               attempt->context->SetStatus(errors::OutOfRange(
                   "PriorityQueue '", name_, "' is closed and has ",
@@ -299,7 +299,7 @@ void PriorityQueue::TryDequeueMany(int num_elements, OpKernelContext* ctx,
           num_elements, [callback]() { callback(Tuple()); }, ctx, cm, token,
           [callback, this, allow_small_batch](
               Attempt* attempt) TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
-            int32 s = queues_[0].size();
+            int32_t s = queues_[0].size();
             // Return OutOfRange if closed and there are fewer elements
             // available than requested.  *Unless* allow_small_batch
             // is true, in which case we return as many elements as
@@ -393,7 +393,7 @@ Status PriorityQueue::MatchesNodeDef(const NodeDef& node_def) {
   TF_RETURN_IF_ERROR(MatchesNodeDefCapacity(node_def, capacity_));
   TF_RETURN_IF_ERROR(MatchesPriorityNodeDefTypes(node_def));
   TF_RETURN_IF_ERROR(MatchesPriorityNodeDefShapes(node_def));
-  return Status::OK();
+  return OkStatus();
 }
 
 Status PriorityQueue::MatchesPriorityNodeDefTypes(
@@ -409,7 +409,7 @@ Status PriorityQueue::MatchesPriorityNodeDefTypes(
                                    " but requested component types were ",
                                    DataTypeSliceString(requested_dtypes));
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 Status PriorityQueue::MatchesPriorityNodeDefShapes(
@@ -424,7 +424,7 @@ Status PriorityQueue::MatchesPriorityNodeDefShapes(
                                    " but requested component shapes were ",
                                    ShapeListString(requested_shapes));
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 }  // namespace tensorflow

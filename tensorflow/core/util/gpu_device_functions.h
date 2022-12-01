@@ -664,6 +664,18 @@ __device__ Eigen::half GpuAtomicCasHelper(Eigen::half* ptr, F accumulate) {
 }
 
 template <typename F>
+__device__ Eigen::bfloat16 GpuAtomicCasHelper(Eigen::bfloat16* ptr,
+                                              F accumulate) {
+  Eigen::half ret = detail::GpuAtomicCasHelper(
+      reinterpret_cast<Eigen::half*>(ptr), [accumulate](Eigen::half a) {
+        Eigen::bfloat16 acc =
+            accumulate(Eigen::numext::bit_cast<Eigen::bfloat16>(a));
+        return Eigen::numext::bit_cast<Eigen::half>(acc);
+      });
+  return Eigen::numext::bit_cast<Eigen::bfloat16>(ret);
+}
+
+template <typename F>
 __device__ long long GpuAtomicCasHelper(long long* ptr, F accumulate) {
   return static_cast<long long>(
       GpuAtomicCasHelper(reinterpret_cast<unsigned long long*>(ptr),
@@ -725,6 +737,12 @@ __device__ inline Eigen::half GpuAtomicAdd(Eigen::half* ptr,
       ptr, [value](Eigen::half a) { return a + value; });
 }
 
+__device__ inline Eigen::bfloat16 GpuAtomicAdd(Eigen::bfloat16* ptr,
+                                               Eigen::bfloat16 value) {
+  return detail::GpuAtomicCasHelper(
+      ptr, [value](Eigen::bfloat16 a) { return a + value; });
+}
+
 #if (__CUDA_ARCH__ < 600) || TENSORFLOW_USE_ROCM
 __device__ inline double GpuAtomicAdd(double* ptr, double value) {
   return detail::GpuAtomicCasHelper(ptr,
@@ -771,14 +789,13 @@ __device__ inline double GpuAtomicSub(double* ptr, double value) {
   return GpuAtomicAdd(ptr, -value);
 }
 
-__device__ inline tensorflow::int64 GpuAtomicSub(tensorflow::int64* ptr,
-                                                 int64_t value) {
+__device__ inline int64_t GpuAtomicSub(int64_t* ptr, int64_t value) {
   return GpuAtomicAdd(ptr, -value);
 }
 
 __device__ inline tensorflow::uint64 GpuAtomicSub(tensorflow::uint64* ptr,
                                                   tensorflow::uint64 value) {
-  return GpuAtomicAdd(ptr, -static_cast<tensorflow::int64>(value));
+  return GpuAtomicAdd(ptr, -static_cast<int64_t>(value));
 }
 
 __device__ inline Eigen::half GpuAtomicSub(Eigen::half* ptr,
@@ -847,7 +864,7 @@ __device__ inline tensorflow::uint64 GpuAtomicMax(tensorflow::uint64* ptr,
       [value](tensorflow::uint64 a) { return max(a, value); });
 }
 
-__device__ inline int64 GpuAtomicMax(int64* ptr, int64_t value) {
+__device__ inline int64_t GpuAtomicMax(int64_t* ptr, int64_t value) {
   return detail::GpuAtomicCasHelper(
       detail::ToCudaSupportedPtr(ptr),
       [value](int64_t a) { return max(a, value); });
@@ -914,7 +931,7 @@ __device__ inline tensorflow::uint64 GpuAtomicMin(tensorflow::uint64* ptr,
       [value](tensorflow::uint64 a) { return min(a, value); });
 }
 
-__device__ inline int64 GpuAtomicMin(int64* ptr, int64_t value) {
+__device__ inline int64_t GpuAtomicMin(int64_t* ptr, int64_t value) {
   return detail::GpuAtomicCasHelper(
       detail::ToCudaSupportedPtr(ptr),
       [value](int64_t a) { return min(a, value); });

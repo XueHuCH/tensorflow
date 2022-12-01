@@ -27,6 +27,7 @@ limitations under the License.
 #include "tensorflow/core/common_runtime/test_collective_executor_mgr.h"
 #include "tensorflow/core/common_runtime/threadpool_device.h"
 #include "tensorflow/core/framework/collective.h"
+#include "tensorflow/core/framework/device_attributes.pb.h"
 #include "tensorflow/core/framework/fake_input.h"
 #include "tensorflow/core/framework/node_def.pb.h"
 #include "tensorflow/core/framework/node_def_builder.h"
@@ -55,7 +56,7 @@ class PermuterTest : public ::testing::Test {
     for (int wi = 0; wi < num_workers; ++wi) {
       for (int di = 0; di < num_devices; ++di) {
         int rank = wi * num_devices + di;
-        instances_.push_back(absl::make_unique<DeviceInstance>(
+        instances_.push_back(std::make_unique<DeviceInstance>(
             rank, permutation, dtype, shape, test_env_.get()));
       }
     }
@@ -146,8 +147,10 @@ class PermuterTest : public ::testing::Test {
       col_params_ = CreateCollectiveParams(*test_env_, rank, "Permute",
                                            PERMUTE_COLLECTIVE, dtype, shape);
       col_params_->instance.permutation = std::move(permutation);
-      col_params_->instance.devices = col_params_->group.device_names;
-      string dev_name = col_params_->group.device_names[rank];
+      for (const CollGroupMember& member : col_params_->group.members) {
+        col_params_->instance.devices.push_back(member.device.name());
+      }
+      string dev_name = col_params_->group.members[rank].device.name();
       TF_CHECK_OK(test_env_->device_mgr->LookupDevice(dev_name, &device_))
           << "Couldn't find device " << dev_name
           << " existing devices: " << test_env_->device_mgr->DebugString();
@@ -199,7 +202,7 @@ class PermuterTest : public ::testing::Test {
         RunTest<int32>(dtype, DEVICE_##T, W, D, L, A);              \
       } break;                                                      \
       case DT_INT64: {                                              \
-        RunTest<int64>(dtype, DEVICE_##T, W, D, L, A);              \
+        RunTest<int64_t>(dtype, DEVICE_##T, W, D, L, A);            \
       } break;                                                      \
       default:                                                      \
         LOG(FATAL) << "Unimplemented";                              \

@@ -1,4 +1,4 @@
-/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,10 +16,12 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/lite/python/graphdef_to_tfl_flatbuffer.h"
 
 #include <ostream>
+#include <string>
 #include <utility>
 
 #include "llvm/ADT/None.h"
 #include "llvm/Support/ToolOutputFile.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "mlir/Pass/Pass.h"  // from @llvm-project
@@ -32,6 +34,7 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/lite/transforms/passes.h"
 #include "tensorflow/compiler/mlir/tensorflow/translate/import_model.h"
 #include "tensorflow/compiler/mlir/tensorflow/translate/mlir_roundtrip_flags.h"
+#include "tensorflow/compiler/xla/stream_executor/lib/statusor.h"
 #include "tensorflow/core/framework/graph.pb.h"
 #include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/lib/core/errors.h"
@@ -40,7 +43,6 @@ limitations under the License.
 #include "tensorflow/lite/toco/model_flags.pb.h"
 #include "tensorflow/lite/toco/toco_flags.pb.h"
 #include "tensorflow/lite/toco/types.pb.h"
-#include "tensorflow/stream_executor/lib/statusor.h"
 
 namespace tensorflow {
 Status ConvertGraphDefToTFLiteFlatBuffer(const toco::ModelFlags& model_flags,
@@ -51,7 +53,7 @@ Status ConvertGraphDefToTFLiteFlatBuffer(const toco::ModelFlags& model_flags,
   using ::tflite::optimize::ReducedPrecisionSupport;
   mlir::MLIRContext context;
   GraphImportConfig specs;
-  mlir::TFL::QuantizationSpecs quant_specs;
+  mlir::quant::QuantizationSpecs quant_specs;
 
   // Parse input arrays.
   std::vector<string> node_names;
@@ -68,21 +70,6 @@ Status ConvertGraphDefToTFLiteFlatBuffer(const toco::ModelFlags& model_flags,
   TF_RETURN_IF_ERROR(tensorflow::ParseInputArrayInfo(
       node_names, node_dtypes, node_shapes, &specs.inputs));
 
-  if (toco_flags.quantize_to_float16() || toco_flags.allow_bfloat16()) {
-    ReducedPrecisionSupport mask = ReducedPrecisionSupport::None;
-    if (toco_flags.quantize_to_float16()) {
-      mask |= ReducedPrecisionSupport::Float16Inference;
-    }
-    if (toco_flags.allow_bfloat16()) {
-      mask |= ReducedPrecisionSupport::Bfloat16Inference;
-    }
-    if (toco_flags.accumulation_type() == toco::IODataType::FLOAT16) {
-      mask |= ReducedPrecisionSupport::Float16Accumulation;
-    } else {
-      mask |= ReducedPrecisionSupport::Float32Accumulation;
-    }
-    quant_specs.support_mask = mask;
-  }
   // Parse output arrays.
   std::vector<string> output_arrays(model_flags.output_arrays().begin(),
                                     model_flags.output_arrays().end());
@@ -100,6 +87,7 @@ Status ConvertGraphDefToTFLiteFlatBuffer(const toco::ModelFlags& model_flags,
   specs.convert_legacy_fed_inputs = true;
   specs.graph_as_function = false;
   specs.upgrade_legacy = true;
+  specs.unconditionally_use_set_output_shapes = true;
   internal::WarningUnusedFlags(model_flags, toco_flags);
 
   // Register all custom ops, including user-specified custom ops.
@@ -118,6 +106,13 @@ Status ConvertGraphDefToTFLiteFlatBuffer(const toco::ModelFlags& model_flags,
   if (toco_flags.inference_type() == toco::IODataType::QUANTIZED_INT16) {
     pass_config.unfold_batch_matmul = false;
   }
+  pass_config.unfold_large_splat_constant =
+      toco_flags.unfold_large_splat_constant();
+  pass_config.enable_dynamic_update_slice =
+      toco_flags.enable_dynamic_update_slice();
+  pass_config.preserve_assert_op = toco_flags.preserve_assert_op();
+  pass_config.guarantee_all_funcs_one_use =
+      toco_flags.guarantee_all_funcs_one_use();
 
   return internal::ConvertMLIRToTFLiteFlatBuffer(
       model_flags, toco_flags, std::move(module), pass_config,

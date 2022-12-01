@@ -20,13 +20,17 @@ limitations under the License.
 #include <unordered_map>
 #include <vector>
 
+#include "absl/container/flat_hash_set.h"
 #include "tensorflow/core/framework/device.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/strings/strcat.h"
+#include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/public/session_options.h"
+#include "tensorflow/core/util/device_name_utils.h"
+#include "tensorflow/core/util/env_var.h"
 
 namespace tensorflow {
 
@@ -49,6 +53,17 @@ std::unordered_map<string, FactoryItem>& device_factories() {
   return *factories;
 }
 
+bool IsDeviceFactoryEnabled(const string& device_type) {
+  std::vector<string> enabled_devices;
+  TF_CHECK_OK(tensorflow::ReadStringsFromEnvVar(
+      /*env_var_name=*/"TF_ENABLED_DEVICE_TYPES", /*default_val=*/"",
+      &enabled_devices));
+  if (enabled_devices.empty()) {
+    return true;
+  }
+  return std::find(enabled_devices.begin(), enabled_devices.end(),
+                   device_type) != enabled_devices.end();
+}
 }  // namespace
 
 // static
@@ -74,18 +89,23 @@ bool DeviceFactory::IsPluggableDevice(const string& device_type) {
 }
 
 // static
-void DeviceFactory::Register(const string& device_type, DeviceFactory* factory,
+void DeviceFactory::Register(const string& device_type,
+                             std::unique_ptr<DeviceFactory> factory,
                              int priority, bool is_pluggable_device) {
+  if (!IsDeviceFactoryEnabled(device_type)) {
+    LOG(INFO) << "Device factory '" << device_type << "' disabled by "
+              << "TF_ENABLED_DEVICE_TYPES environment variable.";
+    return;
+  }
   mutex_lock l(*get_device_factory_lock());
-  std::unique_ptr<DeviceFactory> factory_ptr(factory);
   std::unordered_map<string, FactoryItem>& factories = device_factories();
   auto iter = factories.find(device_type);
   if (iter == factories.end()) {
-    factories[device_type] = {std::move(factory_ptr), priority,
+    factories[device_type] = {std::move(factory), priority,
                               is_pluggable_device};
   } else {
     if (iter->second.priority < priority) {
-      iter->second = {std::move(factory_ptr), priority, is_pluggable_device};
+      iter->second = {std::move(factory), priority, is_pluggable_device};
     } else if (iter->second.priority == priority) {
       LOG(FATAL) << "Duplicate registration of device factory for type "
                  << device_type << " with the same priority " << priority;
@@ -98,6 +118,11 @@ DeviceFactory* DeviceFactory::GetFactory(const string& device_type) {
   auto it = device_factories().find(device_type);
   if (it == device_factories().end()) {
     return nullptr;
+  } else if (!IsDeviceFactoryEnabled(device_type)) {
+    LOG(FATAL) << "Device type " << device_type  // Crash OK
+               << " had factory registered but was explicitly disabled by "
+               << "`TF_ENABLED_DEVICE_TYPES`. This environment variable needs "
+               << "to be set at program startup.";
   }
   return it->second.factory.get();
 }
@@ -126,7 +151,7 @@ Status DeviceFactory::ListAllPhysicalDevices(std::vector<string>* devices) {
     }
   }
 
-  return Status::OK();
+  return OkStatus();
 }
 
 Status DeviceFactory::ListPluggablePhysicalDevices(
@@ -138,7 +163,7 @@ Status DeviceFactory::ListPluggablePhysicalDevices(
       TF_RETURN_IF_ERROR(factory->ListPhysicalDevices(devices));
     }
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 Status DeviceFactory::GetAnyDeviceDetails(
@@ -198,7 +223,7 @@ Status DeviceFactory::AddCpuDevices(
     return errors::NotFound("No CPU devices are available in this process");
   }
 
-  return Status::OK();
+  return OkStatus();
 }
 
 Status DeviceFactory::AddDevices(
@@ -208,17 +233,33 @@ Status DeviceFactory::AddDevices(
   // TODO(b/183974121): Consider merge the logic into the loop below.
   TF_RETURN_IF_ERROR(AddCpuDevices(options, name_prefix, devices));
 
+  absl::flat_hash_set<std::string> allowed_device_types;
+  for (const auto& device_filter : options.config.device_filters()) {
+    DeviceNameUtils::ParsedName parsed;
+    if (!DeviceNameUtils::ParseFullOrLocalName(device_filter, &parsed)) {
+      return errors::InvalidArgument(
+          absl::StrCat("Invalid device filter: ", device_filter));
+    }
+    if (parsed.has_type) {
+      allowed_device_types.insert(parsed.type);
+    }
+  }
+
   auto cpu_factory = GetFactory("CPU");
   // Then the rest (including GPU).
   mutex_lock l(*get_device_factory_lock());
   for (auto& p : device_factories()) {
+    if (!allowed_device_types.empty() &&
+        !allowed_device_types.contains(p.first)) {
+      continue;  // Skip if the device type is not found from the device filter.
+    }
     auto factory = p.second.factory.get();
     if (factory != cpu_factory) {
       TF_RETURN_IF_ERROR(factory->CreateDevices(options, name_prefix, devices));
     }
   }
 
-  return Status::OK();
+  return OkStatus();
 }
 
 std::unique_ptr<Device> DeviceFactory::NewDevice(const string& type,

@@ -18,26 +18,26 @@ limitations under the License.
 #include <set>
 
 #include "tensorflow/compiler/xla/debug_options_flags.h"
+#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
+#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
+#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
+#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
 #include "tensorflow/compiler/xla/literal.h"
 #include "tensorflow/compiler/xla/service/copy_insertion.h"
-#include "tensorflow/compiler/xla/service/hlo_computation.h"
-#include "tensorflow/compiler/xla/service/hlo_instruction.h"
 #include "tensorflow/compiler/xla/service/hlo_matchers.h"
-#include "tensorflow/compiler/xla/service/hlo_module.h"
-#include "tensorflow/compiler/xla/service/hlo_opcode.h"
 #include "tensorflow/compiler/xla/service/hlo_runner.h"
 #include "tensorflow/compiler/xla/shape_util.h"
 #include "tensorflow/compiler/xla/test.h"
 #include "tensorflow/compiler/xla/test_helpers.h"
 #include "tensorflow/compiler/xla/tests/hlo_test_base.h"
 #include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/core/platform/test_benchmark.h"
+#include "tensorflow/tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace {
 
-int64 CountCopies(const HloComputation& computation) {
-  int64 count = 0;
+int64_t CountCopies(const HloComputation& computation) {
+  int64_t count = 0;
   for (const auto& instruction : computation.instructions()) {
     if (instruction->opcode() == HloOpcode::kCopy) {
       count++;
@@ -46,24 +46,24 @@ int64 CountCopies(const HloComputation& computation) {
   return count;
 }
 
-int64 CountCopies(const HloModule& module) {
-  int64 count = 0;
+int64_t CountCopies(const HloModule& module) {
+  int64_t count = 0;
   for (const auto& computation : module.computations()) {
     count += CountCopies(*computation);
   }
   return count;
 }
 
-int64 CountControlEdges(const HloComputation& computation) {
-  int64 count = 0;
+int64_t CountControlEdges(const HloComputation& computation) {
+  int64_t count = 0;
   for (const auto& instruction : computation.instructions()) {
     count += instruction->control_successors().size();
   }
   return count;
 }
 
-int64 CountControlEdges(const HloModule& module) {
-  int64 count = 0;
+int64_t CountControlEdges(const HloModule& module) {
+  int64_t count = 0;
   for (const auto& computation : module.computations()) {
     count += CountControlEdges(*computation);
   }

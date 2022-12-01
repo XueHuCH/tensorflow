@@ -47,7 +47,7 @@ struct MapDefunOp::ComputeOptions {
   OpInputList args;
   const std::vector<TensorShape> arg_shapes;
   OpInputList captured_inputs;
-  const int64 batch_size;
+  const int64_t batch_size;
   std::function<void(std::function<void()>)> runner;
 
   // Output of a compute call
@@ -59,7 +59,7 @@ struct MapDefunOp::ComputeOptions {
   // different output shape.
   ComputeOptions(OpKernelContext* ctx, OpInputList args,
                  OpInputList captured_inputs,
-                 std::vector<TensorShape> arg_shapes, int64 batch_size,
+                 std::vector<TensorShape> arg_shapes, int64_t batch_size,
                  const std::vector<PartialTensorShape>& output_shapes_attr,
                  int max_parallelism)
       : args(args),
@@ -102,7 +102,7 @@ class MapDefunOp::MapFunctionCallFrame : public CallFrameInterface {
       // The function is calling for a captured input
       *val =
           &compute_opts_->captured_inputs[index - compute_opts_->args.size()];
-      return Status::OK();
+      return OkStatus();
     }
 
     // NOTE: If contention on mu_ becomes problematic, we could create a vector
@@ -118,7 +118,7 @@ class MapDefunOp::MapFunctionCallFrame : public CallFrameInterface {
       sliced_args_[index] = tensor::DeepCopy(sliced_args_[index]);
     }
     *val = &sliced_args_[index];
-    return Status::OK();
+    return OkStatus();
   }
 
   Status SetRetval(int index, const Tensor& val) override {
@@ -261,7 +261,7 @@ Status MapDefunOp::SetupArgs(OpKernelContext* ctx,
   OpInputList captured_inputs;
   TF_RETURN_IF_ERROR(ctx->input_list(kCapturedInputs, &captured_inputs));
 
-  int64 batch_size = arguments[0].dims() > 0 ? arguments[0].dim_size(0) : -1;
+  int64_t batch_size = arguments[0].dims() > 0 ? arguments[0].dim_size(0) : -1;
 
   for (size_t i = 0; i < arguments.size(); ++i) {
     if (arguments[i].dims() == 0) {
@@ -287,7 +287,7 @@ Status MapDefunOp::SetupArgs(OpKernelContext* ctx,
   *compute_opts =
       new ComputeOptions(ctx, arguments, captured_inputs, std::move(arg_shapes),
                          batch_size, output_shapes_, max_intra_op_parallelism_);
-  return Status::OK();
+  return OkStatus();
 }
 
 Status MapDefunOp::SetupOutputs(OpKernelContext* ctx, ComputeOptions* opts) {
@@ -303,7 +303,7 @@ Status MapDefunOp::SetupOutputs(OpKernelContext* ctx, ComputeOptions* opts) {
       TF_RETURN_IF_ERROR(opts->output.allocate(i, output_shape, &out));
     }
   }
-  return Status::OK();
+  return OkStatus();
 }
 
 namespace {

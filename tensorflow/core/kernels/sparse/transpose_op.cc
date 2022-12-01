@@ -53,7 +53,7 @@ template <typename T>
 Status ValidateTransposeInputs(const ConstCSRComponent<T>& input,
                                const CSRComponent<T>& output) {
   const int rank = input.dense_shape_host.size();
-  const int64 nnz = input.col_ind.size();
+  const int64_t nnz = input.col_ind.size();
   const int num_rows = input.row_ptr.size() - 1;
   const int num_cols = input.dense_shape_host(rank - 1);
 
@@ -87,7 +87,7 @@ Status ValidateTransposeInputs(const ConstCSRComponent<T>& input,
         "Input nnz should equal the output values size. Got ", nnz, " vs. ",
         output.values.size());
   }
-  return Status::OK();
+  return OkStatus();
 }
 }  // namespace
 
@@ -150,15 +150,15 @@ Status CSRSparseMatrixTranspose<Device, T>::operator()(
   const int rank = input_matrix.dims();
   Tensor output_dense_shape_t(cpu_allocator(), DT_INT64, TensorShape({rank}));
   const Tensor& input_dense_shape_t = input_matrix.dense_shape();
-  auto input_dense_shape = input_dense_shape_t.vec<int64>();
-  auto output_dense_shape = output_dense_shape_t.vec<int64>();
-  const int64 batch_size = input_matrix.batch_size();
+  auto input_dense_shape = input_dense_shape_t.vec<int64_t>();
+  auto output_dense_shape = output_dense_shape_t.vec<int64_t>();
+  const int64_t batch_size = input_matrix.batch_size();
   if (rank == 3) {
     output_dense_shape(0) = batch_size;
   }
   output_dense_shape(rank - 2) = input_dense_shape(rank - 1);
   output_dense_shape(rank - 1) = input_dense_shape(rank - 2);
-  const int64 output_rows = output_dense_shape(rank - 2);
+  const int64_t output_rows = output_dense_shape(rank - 2);
 
   // nnzs per batch do not change with matrix transposition.
   Tensor batch_ptr_t = input_matrix.batch_pointers();
@@ -205,7 +205,7 @@ Status CSRSparseMatrixTranspose<Device, T>::operator()(
     maybe_conj_inplace<Device, T>::run(d, &output_values_t);
   }
 
-  return Status::OK();
+  return OkStatus();
 }
 
 // CPU kernel for transposing a single component of a CSR SparseMatrix.
@@ -220,7 +220,7 @@ struct CSRSparseMatrixTransposeComponent<CPUDevice, T> {
     const int rank = input.dense_shape_host.size();
     const int num_rows = input.row_ptr.size() - 1;
     const int num_cols = input.dense_shape_host(rank - 1);
-    const int64 nnz = input.col_ind.size();
+    const int64_t nnz = input.col_ind.size();
 
     // Compute the column counts; whose prefix sums make up the output row
     // pointers.
@@ -235,18 +235,18 @@ struct CSRSparseMatrixTransposeComponent<CPUDevice, T> {
     // into the target output row (based on the current column count).
     std::vector<int> current_col_count(num_cols);
     for (int row_idx = 0; row_idx < num_rows; ++row_idx) {
-      const int64 row_begin = input.row_ptr(row_idx);
-      const int64 row_end = input.row_ptr(row_idx + 1);
+      const int64_t row_begin = input.row_ptr(row_idx);
+      const int64_t row_end = input.row_ptr(row_idx + 1);
       for (int64_t i = row_begin; i < row_end; ++i) {
         const int col_idx = input.col_ind(i);
-        const int64 offset =
+        const int64_t offset =
             output->row_ptr(col_idx) + current_col_count[col_idx];
         output->col_ind(offset) = row_idx;
         output->values(offset) = input.values(i);
         current_col_count[col_idx] += 1;
       }
     }
-    return Status::OK();
+    return OkStatus();
   }
 };
 
@@ -276,7 +276,7 @@ struct CSRSparseMatrixTransposeComponent<GPUDevice, T> {
         x.col_ind.data() /*csrColInd*/, y->values.data() /*cscVal*/,
         y->col_ind.data() /*cscRowInd*/, y->row_ptr.data() /*cscColPtr*/,
         copyValues);
-    return Status::OK();
+    return OkStatus();
   }
 };
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM

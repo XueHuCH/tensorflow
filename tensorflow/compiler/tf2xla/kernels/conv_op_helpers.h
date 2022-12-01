@@ -19,9 +19,9 @@ limitations under the License.
 #include <vector>
 
 #include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/statusor.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/platform/statusor.h"
 #include "tensorflow/core/util/padding.h"
 #include "tensorflow/core/util/tensor_format.h"
 
@@ -51,7 +51,7 @@ struct ConvOpAttrs {
   std::vector<int32> dilations;
   std::vector<int32> strides;
   Padding padding;
-  std::vector<int64> explicit_paddings;
+  std::vector<int64_t> explicit_paddings;
   TensorFormat data_format;
 };
 

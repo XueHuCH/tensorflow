@@ -12,8 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_CC_EXPERIMENTAL_LIBTF_TESTS_VALUE_IOSTREAM_H_
-#define TENSORFLOW_CC_EXPERIMENTAL_LIBTF_TESTS_VALUE_IOSTREAM_H_
+#ifndef TENSORFLOW_CC_EXPERIMENTAL_LIBTF_VALUE_IOSTREAM_H_
+#define TENSORFLOW_CC_EXPERIMENTAL_LIBTF_VALUE_IOSTREAM_H_
 
 #include <iostream>
 
@@ -51,10 +51,7 @@ class TaggedValueIOStreamVisitor {
 
  public:
   explicit TaggedValueIOStreamVisitor(std::ostream& o) : o_(o) {}
-  std::ostream& operator()(const None& x) {
-    o_ << "None";
-    return o_;
-  }
+
   std::ostream& operator()(const ListPtr& x) {
     OutList(o_, x->begin(), x->end(), '[', ']');
     return o_;
@@ -71,10 +68,6 @@ class TaggedValueIOStreamVisitor {
     o_ << "Capsule(" << x.get() << ")";
     return o_;
   }
-  std::ostream& operator()(const WeakCapsule& x) {
-    o_ << "WeakCapsule(" << x.lock().get() << ")";
-    return o_;
-  }
   std::ostream& operator()(const Func& x) {
     o_ << "Func";
     return o_;
@@ -83,11 +76,7 @@ class TaggedValueIOStreamVisitor {
     o_ << "Tensor";
     return o_;
   }
-  std::ostream& operator()(const TensorSpec& x) {
-    o_ << "TensorSpec(shape = " << x.shape.DebugString()
-       << ", dtype = " << x.dtype << ")";
-    return o_;
-  }
+
   template <class T>
   std::ostream& operator()(const T& x) {
     o_ << x;
@@ -101,4 +90,4 @@ inline std::ostream& operator<<(std::ostream& o, const TaggedValue& v) {
 }  // namespace impl
 }  // namespace libtf
 }  // namespace tf
-#endif  // TENSORFLOW_CC_EXPERIMENTAL_LIBTF_TESTS_VALUE_IOSTREAM_H_
+#endif  // TENSORFLOW_CC_EXPERIMENTAL_LIBTF_VALUE_IOSTREAM_H_

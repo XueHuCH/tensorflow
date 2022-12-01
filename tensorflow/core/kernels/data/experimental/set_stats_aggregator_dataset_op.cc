@@ -36,11 +36,11 @@ class StatsAggregatorWithTagAndPrefix : public StatsAggregator {
       : wrapped_(stats_aggregator), tag_(tag), prefix_(prefix) {}
 
   void AddToHistogram(const string& name, gtl::ArraySlice<double> values,
-                      int64 steps) override {
+                      int64_t steps) override {
     wrapped_->AddToHistogram(TaggedName(name), values, steps);
   }
 
-  void AddScalar(const string& name, float value, int64 steps) override {
+  void AddScalar(const string& name, float value, int64_t steps) override {
     wrapped_->AddScalar(TaggedName(name), value, steps);
   }
 
@@ -49,7 +49,7 @@ class StatsAggregatorWithTagAndPrefix : public StatsAggregator {
   }
 
   void IncrementCounter(const string& name, const string& label,
-                        int64 val) override {
+                        int64_t val) override {
     if (!prefix_.empty()) {
       wrapped_->IncrementCounter(
           strings::StrCat(prefix_, "/", TaggedName(name)), label, val);
@@ -121,7 +121,7 @@ class SetStatsAggregatorDatasetOp : public UnaryDatasetOpKernel {
 
     std::unique_ptr<IteratorBase> MakeIteratorInternal(
         const string& prefix) const override {
-      return absl::make_unique<Iterator>(Iterator::Params{
+      return std::make_unique<Iterator>(Iterator::Params{
           this, strings::StrCat(prefix, "::SetStatsAggregator")});
     }
 
@@ -136,12 +136,14 @@ class SetStatsAggregatorDatasetOp : public UnaryDatasetOpKernel {
       return "SetStatsAggregatorDatasetOp::Dataset";
     }
 
-    int64 Cardinality() const override { return input_->Cardinality(); }
+    int64_t CardinalityInternal() const override {
+      return input_->Cardinality();
+    }
 
     Status InputDatasets(
         std::vector<const DatasetBase*>* inputs) const override {
       inputs->push_back(input_);
-      return Status::OK();
+      return OkStatus();
     }
 
     Status CheckExternalState() const override {
@@ -163,7 +165,7 @@ class SetStatsAggregatorDatasetOp : public UnaryDatasetOpKernel {
       TF_RETURN_IF_ERROR(b->AddDataset(
           this, {input_graph_node, resource_handle_node, tag_node, prefix_node},
           output));
-      return Status::OK();
+      return OkStatus();
     }
 
    private:

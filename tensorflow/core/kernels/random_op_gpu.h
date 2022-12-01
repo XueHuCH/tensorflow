@@ -176,6 +176,10 @@ template <class Distribution>
 PHILOX_DEVICE_INLINE void FillPhiloxRandomKernel<Distribution, true>::Run(
     const uint64* key, const uint64* counter, random::PhiloxRandom base_gen,
     T* data, int64 size, Distribution dist) {
+  if (key != nullptr && counter != nullptr) {
+    base_gen = GetPhiloxRandomFromCounterKeyMem(counter, key);
+  }
+
   using random::PhiloxRandom;
   using random::SingleSampleAdapter;
 
@@ -190,9 +194,6 @@ PHILOX_DEVICE_INLINE void FillPhiloxRandomKernel<Distribution, true>::Run(
   int64 group_index = thread_id;
   int64 offset = group_index * kGroupSize;
 
-  if (key != nullptr && counter != nullptr) {
-    base_gen = GetPhiloxRandomFromCounterKeyMem(counter, key);
-  }
   while (offset < size) {
     // Since each output takes a variable number of samples, we need to
     // realign the generator to the beginning for the current output group
@@ -237,7 +238,7 @@ void FillPhiloxRandom<GPUDevice, Distribution>::operator()(
   if (size == 0) return;
   const int32 block_size = d.maxGpuThreadsPerBlock();
   const int32 num_blocks =
-      std::min<int64>(
+      std::min<int64_t>(
           d.getNumGpuMultiProcessors() * d.maxGpuThreadsPerMultiProcessor(),
           size + block_size - 1) /
       block_size;

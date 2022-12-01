@@ -16,9 +16,9 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_ALL_TO_ALL_DECOMPOSER_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_ALL_TO_ALL_DECOMPOSER_H_
 
-#include "tensorflow/compiler/xla/service/hlo_instruction.h"
-#include "tensorflow/compiler/xla/service/hlo_instructions.h"
-#include "tensorflow/compiler/xla/service/hlo_module.h"
+#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
+#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
+#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
 #include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
 #include "tensorflow/compiler/xla/service/op_expander_pass.h"
 
@@ -30,7 +30,7 @@ namespace xla {
 class AllToAllDecomposer : public OpExpanderPass {
  public:
   explicit AllToAllDecomposer(bool decompose_to_tuple = true,
-                              int64 min_array_rank = 0)
+                              int64_t min_array_rank = 0)
       : decompose_to_tuple_(decompose_to_tuple),
         min_array_rank_(min_array_rank) {}
   ~AllToAllDecomposer() override = default;
@@ -41,7 +41,7 @@ class AllToAllDecomposer : public OpExpanderPass {
   StatusOr<HloInstruction*> ExpandInstruction(
       HloInstruction* instruction) override;
   bool decompose_to_tuple_;
-  int64 min_array_rank_;
+  int64_t min_array_rank_;
 };
 
 }  // namespace xla

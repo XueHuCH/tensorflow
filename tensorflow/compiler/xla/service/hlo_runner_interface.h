@@ -23,10 +23,10 @@ limitations under the License.
 #include <vector>
 
 #include "absl/types/span.h"
+#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
+#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
 #include "tensorflow/compiler/xla/service/computation_placer.h"
 #include "tensorflow/compiler/xla/service/executable.h"
-#include "tensorflow/compiler/xla/service/hlo_computation.h"
-#include "tensorflow/compiler/xla/service/hlo_module.h"
 #include "tensorflow/compiler/xla/status_macros.h"
 #include "tensorflow/compiler/xla/statusor.h"
 #include "tensorflow/compiler/xla/types.h"
@@ -44,7 +44,7 @@ class HloRunnerInterface {
   // The options used to configure an ExecuteReplicated() call.
   struct ReplicatedExecuteOptions {
     // The number of devices the HLO module should be replicated onto.
-    int64 num_replicas = 1;
+    int64_t num_replicas = 1;
 
     // The arguments to be fed to each replica. Since this is used for a
     // replicated execution, all the arguments are the same for all replicas.
@@ -61,7 +61,7 @@ class HloRunnerInterface {
     // lead to infeed threads feeding to a gone computation, while a lower
     // value would trigger a stuck ExecuteReplicated() call (the computation
     // will be trying to infeed data which will never come).
-    int64 infeed_steps = -1;
+    int64_t infeed_steps = -1;
 
     // The shape of the outfeed operation. If empty, the HLO module does not
     // generate any outfeed.
@@ -163,16 +163,16 @@ class HloRunnerInterface {
       DeviceAssignment* device_assignment) = 0;
 
   virtual StatusOr<std::vector<Literal>> ExecuteReplicated(
-      std::function<Executable*(int64)> executable_provider,
-      std::function<int64(int64)> argument_count_provider,
-      std::function<const Literal*(int64, int64)> argument_provider,
-      const ReplicatedExecuteOptions& options) = 0;
+      std::function<Executable*(int64_t)> executable_provider,
+      std::function<int64_t(int64_t)> argument_count_provider,
+      std::function<const Literal*(int64_t, int64_t)> argument_provider,
+      const ReplicatedExecuteOptions& options,
+      DeviceAssignment* device_assignment) = 0;
+
+  // Returns the name of this runner.
+  virtual absl::string_view Name() const = 0;
 
   typedef std::function<Shape(const Shape&)> DeviceShapeRepresentationFn;
-
- protected:
-  void UpdateEntryComputationLayout(
-      HloModule* module, DeviceShapeRepresentationFn shape_representation_fn);
 };
 
 }  // namespace xla

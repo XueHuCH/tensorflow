@@ -68,6 +68,8 @@ class DeviceMgr {
 
   virtual int NumDeviceType(const string& type) const = 0;
 
+  virtual int NumDevices() const = 0;
+
   // Returns an arbitrary CPU device if one is present, otherwise return
   // nullptr.
   virtual Device* HostCPU() const = 0;
@@ -95,6 +97,7 @@ class StaticDeviceMgr : public DeviceMgr {
   bool ContainsDevice(int64_t device_incarnation) const override;
   void ClearContainers(gtl::ArraySlice<string> containers) const override;
   int NumDeviceType(const string& type) const override;
+  int NumDevices() const override;
   Device* HostCPU() const override;
 
  private:
@@ -102,7 +105,7 @@ class StaticDeviceMgr : public DeviceMgr {
 
   StringPiece CopyToBackingStore(StringPiece s);
 
-  absl::flat_hash_set<int64> device_incarnation_set_;
+  absl::flat_hash_set<int64_t> device_incarnation_set_;
   std::unordered_map<StringPiece, Device*, StringPieceHasher> device_map_;
   core::Arena name_backing_store_;  // Storage for keys in device_map_
   std::unordered_map<string, int> device_type_counts_;
@@ -135,6 +138,7 @@ class DynamicDeviceMgr : public DeviceMgr {
   bool ContainsDevice(int64_t device_incarnation) const override;
   void ClearContainers(gtl::ArraySlice<string> containers) const override;
   int NumDeviceType(const string& type) const override;
+  int NumDevices() const override;
   Device* HostCPU() const override;
 
   // Add devices to device manager. Returns error for repeated device names.
@@ -156,7 +160,8 @@ class DynamicDeviceMgr : public DeviceMgr {
   std::vector<std::unique_ptr<Device>> dynamic_devices_
       TF_GUARDED_BY(devices_mu_);
 
-  absl::flat_hash_set<int64> device_incarnation_set_ TF_GUARDED_BY(devices_mu_);
+  absl::flat_hash_set<int64_t> device_incarnation_set_
+      TF_GUARDED_BY(devices_mu_);
   std::unordered_map<string, Device*> device_map_ TF_GUARDED_BY(devices_mu_);
 
   std::unordered_map<string, int> device_type_counts_

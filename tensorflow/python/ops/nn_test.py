@@ -14,15 +14,11 @@
 # ==============================================================================
 """Tests for miscellaneous functionality in tensorflow.ops.nn."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
+import functools
 import math
 
 from absl.testing import parameterized
 import numpy as np
-from six.moves import xrange  # pylint: disable=redefined-builtin
 
 from tensorflow.python.eager import def_function
 from tensorflow.python.framework import constant_op
@@ -96,16 +92,18 @@ class ZeroFractionTest(test_lib.TestCase):
                           sess.run(sparsity, {value: [[0., 1.], [0.3, 2.]]}))
 
 
+@test_util.run_all_in_graph_and_eager_modes
 class SoftmaxTest(test_lib.TestCase, parameterized.TestCase):
 
   def _softmax(self, x):
     assert len(x.shape) == 2
+    if x.shape[1] == 0:
+      return x
     m = x.max(1)[:, np.newaxis]
     u = np.exp(x - m)
     z = u.sum(1)[:, np.newaxis]
     return u / z
 
-  @test_util.run_in_graph_and_eager_modes
   def testSoftmax(self):
     x_shape = [5, 10]
     x_np = np.random.randn(*x_shape).astype(np.float32)
@@ -144,18 +142,15 @@ class SoftmaxTest(test_lib.TestCase, parameterized.TestCase):
     self.assertAllClose(y_bf16_tf, expected, rtol=tol, atol=tol)
 
   @parameterized.parameters(((5, 10),), ((2, 3, 4),))
-  @test_util.run_deprecated_v1
   def testGradient(self, x_shape):
     x_np = np.random.randn(*x_shape).astype(np.float64)
-    with self.cached_session():
-      x_tf = constant_op.constant(x_np)
-      y_tf = nn_ops.softmax_v2(x_tf)
-      err = gradient_checker.compute_gradient_error(x_tf, x_shape, y_tf,
-                                                    x_shape)
-    eps = 2e-8
-    self.assertLess(err, eps)
+    x_tf = constant_op.constant(x_np)
+    theoretical, numerical = gradient_checker_v2.compute_gradient(
+        nn_ops.softmax_v2, [x_tf])
+    self.assertAllClose(theoretical, numerical)
 
 
+@test_util.run_all_in_graph_and_eager_modes
 class LogPoissonLossTest(test_lib.TestCase):
 
   def _log_poisson_loss(self, x, z, compute_full_loss=False):
@@ -165,7 +160,6 @@ class LogPoissonLossTest(test_lib.TestCase):
       lpl += np.ma.masked_array(stirling_approx, mask=(z <= 1)).filled(0.)
     return lpl
 
-  @test_util.run_in_graph_and_eager_modes
   def testLogPoissonLoss(self):
     x_shape = [5, 10]
     x_np = np.random.randn(*x_shape).astype(np.float32)
@@ -180,25 +174,19 @@ class LogPoissonLossTest(test_lib.TestCase):
     self.assertAllClose(y_tf_np, y_np, eps)
     self.assertAllClose(y_tf_np_stirling, y_np_stirling, eps)
 
-  @test_util.run_deprecated_v1
   def testGradient(self):
     x_shape = [5, 10]
     x_np = np.random.randn(*x_shape).astype(np.float64)
     z_np = np.random.randint(0, 5, size=x_shape).astype(np.float64)
     with self.cached_session():
       x_tf = constant_op.constant(x_np)
-      y_tf = nn_impl.log_poisson_loss(z_np, x_tf, compute_full_loss=False)
-      y_tf_stirling = nn_impl.log_poisson_loss(
-          z_np, x_tf, compute_full_loss=True)
-      err = gradient_checker.compute_gradient_error(x_tf, x_shape, y_tf,
-                                                    x_shape)
-      err_stirling = gradient_checker.compute_gradient_error(
-          x_tf, x_shape, y_tf_stirling, x_shape)
-    eps = 1e-6
-    self.assertLess(err, eps)
-    self.assertLess(err_stirling, eps)
+      # TODO(b/241834841): Test with `compute_full_loss` set as True
+      theoretical, numerical = gradient_checker_v2.compute_gradient(
+          nn_impl.log_poisson_loss, [z_np, x_tf])
+      self.assertAllClose(theoretical, numerical)
 
 
+@test_util.run_all_in_graph_and_eager_modes
 class LogSoftmaxTest(test_lib.TestCase, parameterized.TestCase):
 
   def _log_softmax(self, x):
@@ -207,7 +195,6 @@ class LogSoftmaxTest(test_lib.TestCase, parameterized.TestCase):
     u = x - m
     return u - np.log(np.sum(np.exp(u), 1, keepdims=True))
 
-  @test_util.run_in_graph_and_eager_modes
   def testLogSoftmax(self):
     x_shape = [5, 10]
     x_np = np.random.randn(*x_shape).astype(np.float32)
@@ -231,23 +218,22 @@ class LogSoftmaxTest(test_lib.TestCase, parameterized.TestCase):
     self.assertAllClose(y_pos_axis_tf, z_gt_axis_tf, eps)
 
   @parameterized.parameters(((5, 10),), ((2, 3, 4),))
-  @test_util.run_deprecated_v1
   def testGradient(self, x_shape):
     x_np = np.random.randn(*x_shape).astype(np.float64)
     with self.cached_session():
       x_tf = constant_op.constant(x_np)
-      y_tf = nn_ops.log_softmax_v2(x_tf)
-      err = gradient_checker.compute_gradient_error(x_tf, x_shape, y_tf,
-                                                    x_shape)
-    eps = 1e-7
-    self.assertLess(err, eps)
+      theoretical, numerical = gradient_checker_v2.compute_gradient(
+          nn_ops.log_softmax_v2, [x_tf])
+      self.assertAllClose(theoretical, numerical)
 
 
+@test_util.run_all_in_graph_and_eager_modes
 class L2LossTest(test_lib.TestCase):
 
-  @test_util.run_in_graph_and_eager_modes
   def testL2Loss(self):
-    for dtype in [dtypes.float32, dtypes.float64]:
+    for dtype in [dtypes.float32, dtypes.float64] + \
+                 [dtypes.bfloat16] if test_util.is_gpu_available(
+                                          cuda_only=True) else []:
       x = constant_op.constant([1.0, 0.0, 3.0, 2.0],
                                shape=[2, 2],
                                name="x",
@@ -256,20 +242,18 @@ class L2LossTest(test_lib.TestCase):
       value = self.evaluate(l2loss)
       self.assertAllClose(7.0, value)
 
-  @test_util.run_deprecated_v1
   def testGradient(self):
     x_shape = [20, 7, 3]
     np.random.seed(1)  # Make it reproducible.
     x_val = np.random.random_sample(x_shape).astype(np.float64)
     with self.cached_session():
       x = constant_op.constant(x_val, name="x")
-      output = nn_ops.l2_loss(x)
-      err = gradient_checker.compute_gradient_error(x, x_shape, output, [1])
-    print("L2Loss gradient err = %g " % err)
-    err_tolerance = 1e-10
-    self.assertLess(err, err_tolerance)
+      theoretical, numerical = gradient_checker_v2.compute_gradient(
+          nn_ops.l2_loss, [x])
+      self.assertAllClose(theoretical, numerical)
 
 
+@test_util.run_all_in_graph_and_eager_modes
 class L2NormalizeTest(test_lib.TestCase):
 
   def _l2Normalize(self, x, dim):
@@ -282,7 +266,6 @@ class L2NormalizeTest(test_lib.TestCase):
       norm = np.apply_along_axis(np.linalg.norm, dim, x)
       return x / np.expand_dims(norm, dim)
 
-  @test_util.run_in_graph_and_eager_modes
   def testL2Normalize(self):
     x_shape = [20, 7, 3]
     np.random.seed(1)
@@ -293,7 +276,6 @@ class L2NormalizeTest(test_lib.TestCase):
       y_tf = nn_impl.l2_normalize(x_tf, dim)
       self.assertAllClose(y_np, self.evaluate(y_tf))
 
-  @test_util.run_in_graph_and_eager_modes
   def testL2NormalizeDimArray(self):
     x_shape = [20, 7, 3]
     np.random.seed(1)
@@ -304,21 +286,17 @@ class L2NormalizeTest(test_lib.TestCase):
     y_tf = nn_impl.l2_normalize(x_tf, dim)
     self.assertAllClose(y_np, self.evaluate(y_tf))
 
-  @test_util.run_deprecated_v1
   def testL2NormalizeGradient(self):
     x_shape = [20, 7, 3]
     np.random.seed(1)
     x_np = np.random.random_sample(x_shape).astype(np.float64)
-    for dim in range(len(x_shape)):
-      with self.cached_session():
-        x_tf = constant_op.constant(x_np, name="x")
-        y_tf = nn_impl.l2_normalize(x_tf, dim)
-        err = gradient_checker.compute_gradient_error(x_tf, x_shape, y_tf,
-                                                      x_shape)
-      print("L2Normalize gradient err = %g " % err)
-      self.assertLess(err, 1e-4)
+    with self.cached_session():
+      x_tf = constant_op.constant(x_np, name="x")
+      # TODO(b/241834841): Test l2_normalize with `axis` set to other dims
+      theoretical, numerical = gradient_checker_v2.compute_gradient(
+          nn_impl.l2_normalize, [x_tf])
+      self.assertAllClose(theoretical, numerical)
 
-  @test_util.run_in_graph_and_eager_modes
   def testL2NormalizeComplex(self):
     x_shape = [20, 7, 3]
     for dtype in [np.complex64, np.complex128]:
@@ -333,214 +311,212 @@ class L2NormalizeTest(test_lib.TestCase):
         self.assertAllClose(y_np, self.evaluate(y_tf))
 
 
-class DropoutTest(test_lib.TestCase):
+DROPOUT_FNS = [
+    ("stateful_v1", nn_ops.dropout),
+    ("stateful_v2", nn_ops.dropout_v2),
+    ("stateless", functools.partial(nn_ops.stateless_dropout, seed=(1, 2))),
+    ("stateless_philox", functools.partial(
+        nn_ops.stateless_dropout, seed=(1, 2), rng_alg="philox"))]
 
-  def testDropout(self):
+
+class DropoutTest(test_lib.TestCase, parameterized.TestCase):
+
+  @parameterized.named_parameters(
+      ("_%s_%s_%s" % (case_name, use_noise_shape, keep_prob), dropout_fn,  # pylint: disable=g-complex-comprehension
+       use_noise_shape, keep_prob)
+      for keep_prob in [0.1, 0.5, 0.8]
+      for use_noise_shape in ["no", "concrete", "partial"]
+      for case_name, dropout_fn in DROPOUT_FNS)
+  def testDropout(self, dropout_fn, use_noise_shape, keep_prob):
     # Runs dropout with 0-1 tensor 10 times, sum the number of ones and validate
     # that it is producing approximately the right number of ones over a large
     # number of samples, based on the keep probability.
-    x_dim = 40
-    y_dim = 30
+    if use_noise_shape == "no":
+      x_dim = 70
+      y_dim = 30
+    else:
+      x_dim = 70 * 30
+      y_dim = 3
     num_iter = 10
-    for keep_prob in [0.1, 0.5, 0.8]:
-      t = constant_op.constant(1.0, shape=[x_dim, y_dim], dtype=dtypes.float32)
-      dropout = nn_ops.dropout(t, rate=(1 - keep_prob))
-      final_count = 0
-      self.assertEqual([x_dim, y_dim], dropout.get_shape())
-      for _ in xrange(0, num_iter):
-        value = self.evaluate(dropout)
-        final_count += np.count_nonzero(value)
-        # Verifies that there are only two values: 0 and 1/keep_prob.
-        sorted_value = np.unique(np.sort(value))
-        self.assertEqual(0, sorted_value[0])
-        self.assertAllClose(1 / keep_prob, sorted_value[1])
+    t = constant_op.constant(1.0, shape=[x_dim, y_dim], dtype=dtypes.float32)
+    if use_noise_shape == "no":
+      noise_shape = None
+    elif use_noise_shape == "concrete":
+      noise_shape = [x_dim, 1]
+    else:
+      noise_shape = [None, 1]
+    dropout = dropout_fn(t, rate=(1 - keep_prob), noise_shape=noise_shape)
+    final_count = 0
+    self.assertEqual([x_dim, y_dim], dropout.get_shape())
+    for _ in range(0, num_iter):
+      value = self.evaluate(dropout)
+      final_count += np.count_nonzero(value)
+      # Verifies that there are only two values: 0 and 1/keep_prob.
+      sorted_value = np.unique(np.sort(value))
+      self.assertEqual(0, sorted_value[0])
+      self.assertAllClose(1 / keep_prob, sorted_value[1])
 
-      # Check that we are in the 15% error range
-      expected_count = x_dim * y_dim * keep_prob * num_iter
-      rel_error = math.fabs(final_count - expected_count) / expected_count
-      print(rel_error)
-      self.assertTrue(rel_error < 0.15)
+    # Check that we are in the 15% error range
+    expected_count = x_dim * y_dim * keep_prob * num_iter
+    rel_error = math.fabs(final_count - expected_count) / expected_count
+    self.assertLess(rel_error, 0.15)
 
-  def testShapedDropout(self):
-    # Runs dropout with 0-1 tensor 10 times, sum the number of ones and validate
-    # that it is producing approximately the right number of ones over a large
-    # number of samples, based on the keep probability. This time with shaped
-    # noise.
-    x_dim = 40 * 30
-    y_dim = 3
-    num_iter = 10
-    for keep_prob in [0.1, 0.5, 0.8]:
-      t = constant_op.constant(1.0, shape=[x_dim, y_dim], dtype=dtypes.float32)
-      dropout = nn_ops.dropout(t, rate=(1 - keep_prob), noise_shape=[x_dim, 1])
-      self.assertEqual([x_dim, y_dim], dropout.get_shape())
-      final_count = 0
-      for _ in xrange(0, num_iter):
-        value = self.evaluate(dropout)
-        final_count += np.count_nonzero(value)
-        # Verifies that there are only two values: 0 and 1/keep_prob.
-        sorted_value = np.unique(np.sort(value))
-        self.assertEqual(0, sorted_value[0])
-        self.assertAllClose(1 / keep_prob, sorted_value[1])
-
-      # Check that we are in the 15% error range
-      expected_count = x_dim * y_dim * keep_prob * num_iter
-      rel_error = math.fabs(final_count - expected_count) / expected_count
-      print(rel_error)
-      self.assertTrue(rel_error < 0.15)
-
-  def testShapedDropoutCorrelation(self):
+  @parameterized.named_parameters(
+      ("_%s_%s" % (case_name, keep_prob), dropout_fn, keep_prob)  # pylint: disable=g-complex-comprehension
+      for keep_prob in [0.1, 0.5, 0.8]
+      for case_name, dropout_fn in DROPOUT_FNS)
+  def testShapedDropoutCorrelation(self, dropout_fn, keep_prob):
     # Runs a shaped dropout and tests that the correlations are correct.
     x_dim = 40
     y_dim = 30
     num_iter = 10
-    for keep_prob in [0.1, 0.5, 0.8]:
-      t = constant_op.constant(1.0, shape=[x_dim, y_dim], dtype=dtypes.float32)
-      dropout = nn_ops.dropout(t, rate=(1 - keep_prob), noise_shape=[x_dim, 1])
-      self.assertEqual([x_dim, y_dim], dropout.get_shape())
-      for _ in xrange(0, num_iter):
-        value = self.evaluate(dropout)
-        # Verifies that each y column as only one type of activation.
-        for i in xrange(x_dim):
-          sorted_value = np.unique(np.sort(value[i, :]))
-          self.assertEqual(sorted_value.size, 1)
+    t = constant_op.constant(1.0, shape=[x_dim, y_dim], dtype=dtypes.float32)
+    dropout = dropout_fn(t, rate=(1 - keep_prob), noise_shape=[x_dim, 1])
+    self.assertEqual([x_dim, y_dim], dropout.get_shape())
+    for _ in range(0, num_iter):
+      value = self.evaluate(dropout)
+      # Verifies that each row has only one type of activation.
+      for i in range(x_dim):
+        sorted_value = np.unique(np.sort(value[i, :]))
+        self.assertEqual(sorted_value.size, 1)
 
+  @parameterized.named_parameters(
+      ("_%s_%s_%s" % (case_name, keep_prob, use_keep_prob), case_name,  # pylint: disable=g-complex-comprehension
+       dropout_fn, keep_prob, use_keep_prob)
+      for use_keep_prob in [False, True]
+      for keep_prob in [0.1, 0.5, 0.8]
+      for case_name, dropout_fn in DROPOUT_FNS)
   @test_util.run_deprecated_v1
-  def testDropoutPlaceholderKeepProb(self):
+  def testDropoutPlaceholderRateAndKeepProb(self, case_name, dropout_fn,
+                                            keep_prob, use_keep_prob):
     # Runs dropout with 0-1 tensor 10 times, sum the number of ones and validate
     # that it is producing approximately the right number of ones over a large
     # number of samples, based on the keep probability.
-    x_dim = 40
+    if use_keep_prob and case_name != "stateful_v1":
+      self.skipTest("Only V1 `dropout` has the `keep_prob` argument.")
+    x_dim = 70
     y_dim = 30
     num_iter = 10
-    for keep_prob in [0.1, 0.5, 0.8]:
-      with self.cached_session():
-        t = constant_op.constant(
-            1.0, shape=[x_dim, y_dim], dtype=dtypes.float32)
-        keep_prob_placeholder = array_ops.placeholder(dtypes.float32)
-        dropout = nn_ops.dropout(t, keep_prob_placeholder)
-        final_count = 0
-        self.assertEqual([x_dim, y_dim], dropout.get_shape())
-        for _ in xrange(0, num_iter):
-          value = dropout.eval(feed_dict={keep_prob_placeholder: keep_prob})
-          final_count += np.count_nonzero(value)
-          # Verifies that there are only two values: 0 and 1/keep_prob.
-          sorted_value = np.unique(np.sort(value))
-          self.assertEqual(0, sorted_value[0])
-          self.assertAllClose(1 / keep_prob, sorted_value[1])
-      # Check that we are in the 15% error range
-      expected_count = x_dim * y_dim * keep_prob * num_iter
-      rel_error = math.fabs(final_count - expected_count) / expected_count
-      print(rel_error)
-      self.assertTrue(rel_error < 0.15)
+    with self.cached_session():
+      t = constant_op.constant(
+          1.0, shape=[x_dim, y_dim], dtype=dtypes.float32)
+      keep_prob_placeholder = array_ops.placeholder(dtypes.float32)
+      if use_keep_prob:
+        dropout = dropout_fn(t, keep_prob=keep_prob_placeholder)
+      else:
+        dropout = dropout_fn(t, rate=1 - keep_prob_placeholder)
+      final_count = 0
+      self.assertEqual([x_dim, y_dim], dropout.get_shape())
+      for _ in range(0, num_iter):
+        value = dropout.eval(feed_dict={keep_prob_placeholder: keep_prob})
+        final_count += np.count_nonzero(value)
+        # Verifies that there are only two values: 0 and 1/keep_prob.
+        sorted_value = np.unique(np.sort(value))
+        self.assertEqual(0, sorted_value[0])
+        self.assertAllClose(1 / keep_prob, sorted_value[1])
+    # Check that we are in the 15% error range
+    expected_count = x_dim * y_dim * keep_prob * num_iter
+    rel_error = math.fabs(final_count - expected_count) / expected_count
+    self.assertLess(rel_error, 0.15)
 
+  @parameterized.named_parameters(
+      ("_%s" % case_name, dropout_fn)
+      for case_name, dropout_fn in DROPOUT_FNS)
   @test_util.run_deprecated_v1
-  def testShapedDropoutUnknownShape(self):
+  def testShapedDropoutUnknownShape(self, dropout_fn):
     x_dim = 40
     y_dim = 30
     keep_prob = 0.5
     x = constant_op.constant(1.0, shape=[x_dim, y_dim], dtype=dtypes.float32)
-    dropout_x = nn_ops.dropout(
+    dropout_x = dropout_fn(
         x,
         rate=(1 - keep_prob),
         noise_shape=array_ops.placeholder(dtypes.int32))
     self.assertEqual(x.get_shape(), dropout_x.get_shape())
 
-  def testPartialShapedDropout(self):
-    x_dim = 40 * 30
-    y_dim = 3
-    num_iter = 10
-    for keep_prob in [0.1, 0.5, 0.8]:
-      t = constant_op.constant(1.0, shape=[x_dim, y_dim], dtype=dtypes.float32)
-      # Set noise_shape=[None, 1] which means [x_dim, 1].
-      dropout = nn_ops.dropout(t, rate=(1 - keep_prob), noise_shape=[None, 1])
-      self.assertEqual([x_dim, y_dim], dropout.get_shape())
-      final_count = 0
-      for _ in xrange(0, num_iter):
-        value = self.evaluate(dropout)
-        final_count += np.count_nonzero(value)
-        # Verifies that there are only two values: 0 and 1/keep_prob.
-        sorted_value = np.unique(np.sort(value))
-        self.assertEqual(0, sorted_value[0])
-        self.assertAllClose(1 / keep_prob, sorted_value[1])
-
-      # Check that we are in the 15% error range
-      expected_count = x_dim * y_dim * keep_prob * num_iter
-      rel_error = math.fabs(final_count - expected_count) / expected_count
-      print(rel_error)
-      self.assertTrue(rel_error < 0.15)
-
+  @parameterized.named_parameters(
+      ("_%s_%s" % (case_name, use_keep_prob), case_name, dropout_fn,  # pylint: disable=g-complex-comprehension
+       use_keep_prob)
+      for use_keep_prob in [False, True]
+      for case_name, dropout_fn in DROPOUT_FNS)
   @test_util.run_deprecated_v1
-  def testInvalidKeepProb(self):
+  def testInvalidRateAndKeepProb(self, case_name, dropout_fn, use_keep_prob):
+    if use_keep_prob and case_name != "stateful_v1":
+      self.skipTest("Only V1 `dropout` has the `keep_prob` argument.")
+    if use_keep_prob:
+      fn = lambda x, y: dropout_fn(x, keep_prob=y)
+    else:
+      fn = lambda x, y: dropout_fn(x, rate=y)
     x_dim = 40
     y_dim = 30
     t = constant_op.constant(1.0, shape=[x_dim, y_dim], dtype=dtypes.float32)
     with self.assertRaises(ValueError):
-      nn_ops.dropout(t, -1.0)
+      fn(t, -1.0)
     with self.assertRaises(ValueError):
-      nn_ops.dropout(t, 1.1)
+      fn(t, 1.1)
     with self.assertRaises(ValueError):
-      nn_ops.dropout(t, [0.0, 1.0])
+      fn(t, [0.0, 1.0])
     with self.assertRaises(ValueError):
-      nn_ops.dropout(t, array_ops.placeholder(dtypes.float64))
+      fn(t, array_ops.placeholder(dtypes.float64))
     with self.assertRaises(ValueError):
-      nn_ops.dropout(t, array_ops.placeholder(dtypes.float32, shape=[2]))
+      fn(t, array_ops.placeholder(dtypes.float32, shape=[2]))
 
-  @test_util.run_deprecated_v1
-  def testInvalidRate(self):
+  @parameterized.named_parameters(
+      ("_%s" % case_name, dropout_fn)
+      for case_name, dropout_fn in DROPOUT_FNS)
+  def testLargeRate(self, dropout_fn):
     x_dim = 40
     y_dim = 30
     t = constant_op.constant(1.0, shape=[x_dim, y_dim], dtype=dtypes.float32)
-    with self.assertRaises(ValueError):
-      nn_ops.dropout_v2(t, -1.0)
-    with self.assertRaises(ValueError):
-      nn_ops.dropout_v2(t, 1.1)
-    with self.assertRaises(ValueError):
-      nn_ops.dropout_v2(t, [0.0, 1.0])
+    _ = dropout_fn(t, rate=0.9)
 
-  def testLargeRate(self):
-    x_dim = 40
-    y_dim = 30
-    t = constant_op.constant(1.0, shape=[x_dim, y_dim], dtype=dtypes.float32)
-    _ = nn_ops.dropout_v2(t, 0.9)
-
-  def testVariableRef(self):
+  @parameterized.named_parameters(
+      ("_%s" % case_name, dropout_fn)
+      for case_name, dropout_fn in DROPOUT_FNS)
+  def testVariableRef(self, dropout_fn):
     x = variable_scope.get_variable("x", shape=[10, 10], dtype=dtypes.float32)
-    _ = nn_ops.dropout(x, keep_prob=0.1)
+    _ = dropout_fn(x, rate=0.1)
 
+  @parameterized.named_parameters(
+      ("_%s" % case_name, dropout_fn)
+      for case_name, dropout_fn in DROPOUT_FNS)
   @test_util.run_deprecated_v1
-  def testShapedDropoutShapeError(self):
+  def testShapedDropoutShapeError(self, dropout_fn):
     # Runs shaped dropout and verifies an error is thrown on misshapen noise.
     x_dim = 40
     y_dim = 30
     keep_prob = 0.5
     t = constant_op.constant(1.0, shape=[x_dim, y_dim], dtype=dtypes.float32)
     with self.assertRaises(ValueError):
-      _ = nn_ops.dropout(
+      _ = dropout_fn(
           t, rate=(1 - keep_prob), noise_shape=[x_dim, y_dim + 10])
     with self.assertRaises(ValueError):
-      _ = nn_ops.dropout(t, rate=(1 - keep_prob), noise_shape=[x_dim, y_dim, 5])
+      _ = dropout_fn(t, rate=(1 - keep_prob), noise_shape=[x_dim, y_dim, 5])
     with self.assertRaises(ValueError):
-      _ = nn_ops.dropout(t, rate=(1 - keep_prob), noise_shape=[x_dim + 3])
+      _ = dropout_fn(t, rate=(1 - keep_prob), noise_shape=[x_dim + 3])
     with self.assertRaises(ValueError):
-      _ = nn_ops.dropout(t, rate=(1 - keep_prob), noise_shape=[x_dim])
+      _ = dropout_fn(t, rate=(1 - keep_prob), noise_shape=[x_dim])
     # test that broadcasting proceeds
-    _ = nn_ops.dropout(t, rate=(1 - keep_prob), noise_shape=[y_dim])
-    _ = nn_ops.dropout(t, rate=(1 - keep_prob), noise_shape=[1, y_dim])
-    _ = nn_ops.dropout(t, rate=(1 - keep_prob), noise_shape=[x_dim, 1])
-    _ = nn_ops.dropout(t, rate=(1 - keep_prob), noise_shape=[1, 1])
+    _ = dropout_fn(t, rate=(1 - keep_prob), noise_shape=[y_dim])
+    _ = dropout_fn(t, rate=(1 - keep_prob), noise_shape=[1, y_dim])
+    _ = dropout_fn(t, rate=(1 - keep_prob), noise_shape=[x_dim, 1])
+    _ = dropout_fn(t, rate=(1 - keep_prob), noise_shape=[1, 1])
 
-  def testNoDropout(self):
+  @parameterized.named_parameters(
+      ("_%s" % case_name, dropout_fn)
+      for case_name, dropout_fn in DROPOUT_FNS)
+  def testNoDropout(self, dropout_fn):
     x = array_ops.zeros((5,))
-    y = nn_ops.dropout(x, rate=0)
+    y = dropout_fn(x, rate=0)
     self.assertAllEqual(x, y)
 
-    y = nn_ops.dropout_v2(x, rate=0)
-    self.assertAllEqual(x, y)
-
-  def testDropoutWithIntegerInputs(self):
+  @parameterized.named_parameters(
+      ("_%s" % case_name, dropout_fn)
+      for case_name, dropout_fn in DROPOUT_FNS)
+  def testDropoutWithIntegerInputs(self, dropout_fn):
     x = constant_op.constant([1, 1, 1, 1, 1])
     with self.assertRaises(ValueError):
-      _ = nn_ops.dropout(x, 0.5)
+      _ = dropout_fn(x, rate=0.5)
 
 
 @test_util.run_all_without_tensor_float_32(
@@ -742,9 +718,9 @@ class ComputeSampledLogitsTest(test_lib.TestCase):
       # First we need to find the hits in this random test run:
       labels_reshape = labels.reshape((batch_size, num_true))
       got_logits = self.evaluate(logits_tensor)
-      for row in xrange(batch_size):
+      for row in range(batch_size):
         row_labels = labels_reshape[row, :]
-        for col in xrange(len(sampled)):
+        for col in range(len(sampled)):
           if sampled[col] in row_labels:
             # We need to add the num_true_test offset into logits_*
             self.assertNear(
@@ -1087,9 +1063,9 @@ class GeluTest(test_lib.TestCase):
     self.assertAllClose(y, z)
 
 
+@test_util.run_all_in_graph_and_eager_modes
 class SwishTest(test_lib.TestCase):
 
-  @test_util.run_deprecated_v1
   def testValues(self):
     np_values = np.array(
         [np.linspace(-7.0, 0.0, 100),
@@ -1104,16 +1080,45 @@ class SwishTest(test_lib.TestCase):
 
     self.assertAllClose(actual_outputs, expected_outputs)
 
-  @test_util.run_deprecated_v1
+  def testValuesWithBeta(self):
+    np_values = np.array(
+        [np.linspace(-7.0, 0.0, 100),
+         np.linspace(0.0, 7.0, 100)],
+        dtype=np.float32)
+    tf_values = constant_op.constant(np_values)
+    actual_tf_outputs = nn_impl.swish(tf_values, beta=0.5)
+    expected_tf_outputs = tf_values * math_ops.sigmoid(0.5 * tf_values)
+
+    actual_outputs, expected_outputs = self.evaluate(
+        [actual_tf_outputs, expected_tf_outputs])
+
+    self.assertAllClose(actual_outputs, expected_outputs)
+
   def testGradients(self):
     shape = [5, 3, 4]
     sigma = 5
     input_values = np.random.randn(*shape) * sigma
     x_tf = constant_op.constant(input_values)
-    y_tf = nn_impl.swish(x_tf)
     with self.cached_session():
-      err = gradient_checker.compute_gradient_error(x_tf, shape, y_tf, shape)
-    self.assertLess(err, 1e-4)
+      def f(x):  # pylint: disable=invalid-name
+        return nn_impl.swish(x)
+
+      theoretical, numerical = gradient_checker_v2.compute_gradient(
+          f, [x_tf])
+      self.assertAllClose(theoretical, numerical)
+
+  def testGradientsWithBeta(self):
+    shape = [5, 3, 4]
+    sigma = 5
+    input_values = np.random.randn(*shape) * sigma
+    x_tf = constant_op.constant(input_values)
+    with self.cached_session():
+      def f(x):  # pylint: disable=invalid-name
+        return nn_impl.swish(x, beta=0.5)
+
+      theoretical, numerical = gradient_checker_v2.compute_gradient(
+          f, [x_tf])
+      self.assertAllClose(theoretical, numerical)
 
 
 class MomentsTest(test_lib.TestCase):
@@ -1331,6 +1336,24 @@ class DataFormatVectorPermuteTest(test_lib.TestCase):
       y_val = self.evaluate(y)
       self.assertAllEqual(y_val, [4, 9])
 
+  def testNDHWCtoNCDHW(self):
+    x_val = [7, 4, 9, 3, 5]
+    x = constant_op.constant(x_val)
+    y = nn_ops.data_format_vec_permute(
+        x, src_format="NDHWC", dst_format="NCDHW")
+    with test_util.use_gpu():
+      y_val = self.evaluate(y)
+      self.assertAllEqual(y_val, [7, 5, 4, 9, 3])
+
+  def testNDHWCtoNCDHW_Size3(self):
+    x_val = [4, 9, 3]
+    x = constant_op.constant(x_val)
+    y = nn_ops.data_format_vec_permute(
+        x, src_format="NDHWC", dst_format="NCDHW")
+    with test_util.use_gpu():
+      y_val = self.evaluate(y)
+      self.assertAllEqual(y_val, [4, 9, 3])
+
   @test_util.disable_xla("unsupported data format")
   def testNHWCToWHCN(self):
     x_val = [7, 4, 9, 3]
@@ -1349,6 +1372,26 @@ class DataFormatVectorPermuteTest(test_lib.TestCase):
       y_val = self.evaluate(y)
       self.assertAllEqual(y_val, [9, 4])
 
+  @test_util.disable_xla("unsupported data format")
+  def testNDHWCToWHDCN(self):
+    x_val = [7, 4, 9, 3, 5]
+    x = constant_op.constant(x_val)
+    y = nn_ops.data_format_vec_permute(
+        x, src_format="NDHWC", dst_format="WHDCN")
+    with test_util.use_gpu():
+      y_val = self.evaluate(y)
+      self.assertAllEqual(y_val, [3, 9, 4, 5, 7])
+
+  @test_util.disable_xla("unsupported data format")
+  def testNDHWCToWHDCN_Size3(self):
+    x_val = [4, 9, 3]
+    x = constant_op.constant(x_val)
+    y = nn_ops.data_format_vec_permute(
+        x, src_format="NDHWC", dst_format="WHDCN")
+    with test_util.use_gpu():
+      y_val = self.evaluate(y)
+      self.assertAllEqual(y_val, [3, 9, 4])
+
   def testNCHWToNHWC(self):
     x_val = [7, 4, 9, 3]
     x = constant_op.constant(x_val)
@@ -1364,6 +1407,24 @@ class DataFormatVectorPermuteTest(test_lib.TestCase):
     with test_util.use_gpu():
       y_val = self.evaluate(y)
       self.assertAllEqual(y_val, [9, 3])
+
+  def testNCDHWToNDHWC(self):
+    x_val = [7, 4, 9, 3, 5]
+    x = constant_op.constant(x_val)
+    y = nn_ops.data_format_vec_permute(
+        x, src_format="NCDHW", dst_format="NDHWC")
+    with test_util.use_gpu():
+      y_val = self.evaluate(y)
+      self.assertAllEqual(y_val, [7, 9, 3, 5, 4])
+
+  def testNCDHWToNDHWC_Size3(self):
+    x_val = [9, 3, 5]
+    x = constant_op.constant(x_val)
+    y = nn_ops.data_format_vec_permute(
+        x, src_format="NCDHW", dst_format="NDHWC")
+    with test_util.use_gpu():
+      y_val = self.evaluate(y)
+      self.assertAllEqual(y_val, [9, 3, 5])
 
   def testNHWCToHWNC(self):
     x_val = [7, 4, 9, 3]
@@ -1412,6 +1473,44 @@ class DataFormatVectorPermuteTest(test_lib.TestCase):
     with test_util.use_gpu():
       y_val = self.evaluate(y)
       self.assertAllEqual(y_val, [[7, 4], [4, 5], [5, 1], [9, 3]])
+
+  def testNDHWCToNCDHW2D(self):
+    x_val = [[7, 4], [9, 3], [4, 5], [5, 1], [8, 2]]
+    x = constant_op.constant(x_val)
+    y = nn_ops.data_format_vec_permute(
+        x, src_format="NDHWC", dst_format="NCDHW")
+    with test_util.use_gpu():
+      y_val = self.evaluate(y)
+      self.assertAllEqual(y_val, [[7, 4], [8, 2], [9, 3], [4, 5], [5, 1]])
+
+  @test_util.disable_xla("unsupported data format")
+  def testNDHWCToDHWNC2D(self):
+    x_val = [[7, 4], [9, 3], [4, 5], [5, 1], [8, 2]]
+    x = constant_op.constant(x_val)
+    y = nn_ops.data_format_vec_permute(
+        x, src_format="NDHWC", dst_format="DHWNC")
+    with test_util.use_gpu():
+      y_val = self.evaluate(y)
+      self.assertAllEqual(y_val, [[9, 3], [4, 5], [5, 1], [7, 4], [8, 2]])
+
+  @test_util.disable_xla("unsupported data format")
+  def testDHWNCToNDHWC2D(self):
+    x_val = [[7, 4], [9, 3], [4, 5], [5, 1], [8, 2]]
+    x = constant_op.constant(x_val)
+    y = nn_ops.data_format_vec_permute(
+        x, src_format="DHWNC", dst_format="NDHWC")
+    with test_util.use_gpu():
+      y_val = self.evaluate(y)
+      self.assertAllEqual(y_val, [[5, 1], [7, 4], [9, 3], [4, 5], [8, 2]])
+
+  def testNCDHWToNDHWC2D(self):
+    x_val = [[7, 4], [9, 3], [4, 5], [5, 1], [8, 2]]
+    x = constant_op.constant(x_val)
+    y = nn_ops.data_format_vec_permute(
+        x, src_format="NCDHW", dst_format="NDHWC")
+    with test_util.use_gpu():
+      y_val = self.evaluate(y)
+      self.assertAllEqual(y_val, [[7, 4], [4, 5], [5, 1], [8, 2], [9, 3]])
 
   @test_util.disable_xla("XLA catches the error and rethrows as different one")
   def testInvalidLength(self):
@@ -1629,13 +1728,15 @@ class MaxPoolTest(test_lib.TestCase):
   def testIncorrectSizeInputSmall(self):
     x = array_ops.ones([3, 4])
     with self.assertRaisesRegex(
-        ValueError, "Input tensor must be of rank 3, 4 or 5 but was 2."):
+        ValueError,
+        "`input.shape.rank` must be 3, 4 or 5.*of rank 2."):
       nn_ops.max_pool_v2(x, 2, 2, "SAME")
 
   def testIncorrectSizeInput(self):
     x = array_ops.ones([3, 4, 1, 2, 1, 2])
     with self.assertRaisesRegex(
-        ValueError, "Input tensor must be of rank 3, 4 or 5 but was 6."):
+        ValueError,
+        "`input.shape.rank` must be 3, 4 or 5.*of rank 6."):
       nn_ops.max_pool_v2(x, 2, 2, "SAME")
 
 
@@ -1719,17 +1820,19 @@ class ConvTransposeTest(test_lib.TestCase):
 
   def testIncorrectSizeInputSmall(self):
     with self.assertRaisesRegex(
-        ValueError, "output_shape must be of length 3, 4 or 5 but was 2."):
+        ValueError,
+        "`output_shape` must be of length 3, 4 or 5.*of length 2."):
       nn_ops.conv_transpose(None, 2, [2, 3], "SAME")
 
   def testIncorrectSizeInput(self):
     with self.assertRaisesRegex(
-        ValueError, "output_shape must be of length 3, 4 or 5 but was 6."):
+        ValueError,
+        "`output_shape` must be of length 3, 4 or 5.* of length 6."):
       nn_ops.conv_transpose(None, 2, [2, 3, 4, 2, 5, 1], "SAME")
 
   def testTensorsNoShape(self):
     with self.assertRaisesRegex(
-        ValueError, "output_shape must be a tensor or sized collection."):
+        ValueError, "`output_shape` must be a tensor or sized collection"):
       nn_ops.conv_transpose(None, None, None, None)
 
 

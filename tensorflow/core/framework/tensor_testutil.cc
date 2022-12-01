@@ -23,7 +23,7 @@ limitations under the License.
 namespace tensorflow {
 namespace test {
 
-static ::testing::AssertionResult IsSameType(const Tensor& x, const Tensor& y) {
+::testing::AssertionResult IsSameType(const Tensor& x, const Tensor& y) {
   if (x.dtype() != y.dtype()) {
     return ::testing::AssertionFailure()
            << "Tensors have different dtypes (" << x.dtype() << " vs "
@@ -32,8 +32,7 @@ static ::testing::AssertionResult IsSameType(const Tensor& x, const Tensor& y) {
   return ::testing::AssertionSuccess();
 }
 
-static ::testing::AssertionResult IsSameShape(const Tensor& x,
-                                              const Tensor& y) {
+::testing::AssertionResult IsSameShape(const Tensor& x, const Tensor& y) {
   if (!x.IsSameSize(y)) {
     return ::testing::AssertionFailure()
            << "Tensors have different shapes (" << x.shape().DebugString()
@@ -48,6 +47,12 @@ static ::testing::AssertionResult EqualFailure(const T& x, const T& y) {
          << std::setprecision(std::numeric_limits<T>::digits10 + 2) << x
          << " not equal to " << y;
 }
+
+template <>
+::testing::AssertionResult EqualFailure<int8>(const int8& x, const int8& y) {
+  return EqualFailure(static_cast<int>(x), static_cast<int>(y));
+}
+
 static ::testing::AssertionResult IsEqual(float x, float y, Tolerance t) {
   // We consider NaNs equal for testing.
   if (Eigen::numext::isnan(x) && Eigen::numext::isnan(y))
@@ -107,6 +112,7 @@ static ::testing::AssertionResult IsEqual(const T& x, const T& y, Tolerance t) {
     return ::testing::AssertionSuccess();
   return EqualFailure(x, y);
 }
+
 template <typename T>
 static ::testing::AssertionResult IsEqual(const std::complex<T>& x,
                                           const std::complex<T>& y,
@@ -214,7 +220,7 @@ void ExpectEqual(const Tensor& x, const Tensor& y, Tolerance t) {
     case DT_COMPLEX128:
       return ExpectEqual<complex128>(x, y, t);
     case DT_INT64:
-      return ExpectEqual<int64>(x, y);
+      return ExpectEqual<int64_t>(x, y);
     case DT_UINT64:
       return ExpectEqual<uint64>(x, y);
     case DT_BOOL:
@@ -233,6 +239,10 @@ void ExpectEqual(const Tensor& x, const Tensor& y, Tolerance t) {
       return ExpectEqual<bfloat16>(x, y, t);
     case DT_HALF:
       return ExpectEqual<Eigen::half>(x, y, t);
+    case DT_FLOAT8_E5M2:
+      return ExpectEqual<float8_e5m2>(x, y, t);
+    case DT_FLOAT8_E4M3FN:
+      return ExpectEqual<float8_e4m3fn>(x, y, t);
     default:
       EXPECT_TRUE(false) << "Unsupported type : " << DataTypeString(x.dtype());
   }
